@@ -3,6 +3,7 @@ import { sql } from "@/lib/db";
 import { currentTeacher, isUuid, json, ownsClass } from "@/lib/auth";
 import { classOverview } from "@/lib/queries";
 import { LOCK_LOOKBACK_HOURS, generatePin } from "@/lib/pin";
+import { SCHOOL_LEVEL_KEYS } from "@/lib/school-level";
 
 // 학급 화면 자료: 학급 정보, 학생별 진행 상황(PIN 포함), 안전 신호 목록, AI 설정 상태
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -22,12 +23,15 @@ const Patch = z
     maxFeedbackRounds: z.coerce.number().int().min(1).max(2).optional(),
     // 학생 PIN 사용(classes.require_pin). 끄면 학급 코드·번호·이름만으로 들어옵니다(시범 수업처럼 짧게 쓸 때만).
     requirePin: z.boolean().optional(),
+    // 학교급(classes.school_level). 바꾸면 그다음에 요청하는 AI 피드백부터 적용됩니다(로그아웃 없음, 이미 받은 카드는 그대로).
+    schoolLevel: z.enum(SCHOOL_LEVEL_KEYS, { message: "학교급을 골라 주세요." }).optional(),
   })
-  .refine((b) => b.name !== undefined || b.isOpen !== undefined || b.maxFeedbackRounds !== undefined || b.requirePin !== undefined, {
+  .refine((b) => b.name !== undefined || b.isOpen !== undefined || b.maxFeedbackRounds !== undefined || b.requirePin !== undefined || b.schoolLevel !== undefined, {
     message: "바꿀 내용이 없습니다.",
   });
 
-// 학급 설정 바꾸기: 이름, 열기/닫기, 단계별 피드백 횟수(1 = 첫 피드백만, 2 = 확인 피드백까지), 학생 PIN 사용
+// 학급 설정 바꾸기: 이름, 열기/닫기, 단계별 피드백 횟수(1 = 첫 피드백만, 2 = 확인 피드백까지), 학생 PIN 사용, 학교급
+// 학교급은 피드백을 요청할 때 읽으므로(src/lib/feedback/round.ts) 바꾸면 그다음 피드백부터 적용되고, 학생 세션에는 영향이 없습니다.
 // '학생 PIN 사용'을 실제로 바꾸면(켬 ↔ 끔):
 // - 학생 세션 지문에 이 설정이 들어 있으므로(src/lib/pin.ts pinFingerprint) 이 학급 학생은 모두 로그아웃되고 다시 들어와야 합니다.
 //   PIN을 끈 사이 친구가 다른 학생으로 들어와 있었다면, PIN을 켜는 순간 쫓겨납니다.
@@ -55,7 +59,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         name = coalesce(${b.name ?? null}::text, name),
         is_open = coalesce(${b.isOpen ?? null}::boolean, is_open),
         max_feedback_rounds = coalesce(${b.maxFeedbackRounds ?? null}::smallint, max_feedback_rounds),
-        require_pin = coalesce(${b.requirePin ?? null}::boolean, require_pin)
+        require_pin = coalesce(${b.requirePin ?? null}::boolean, require_pin),
+        school_level = coalesce(${b.schoolLevel ?? null}::text, school_level)
       where id = ${id} and teacher_id = ${t.id}`;
     const requirePin = b.requirePin ?? cur.require_pin;
     let pinsCreated = 0;

@@ -4,6 +4,7 @@ import { MOCK, structuredCall, type CallMeta } from "./client";
 import { CATEGORIES, CONCERN_KIND_KEYS, normalizeConcern, type Category, type Concern, type ConcernKind } from "./categories";
 import { ruleConcern } from "../concern-rules";
 import { categoryFits, inStage, normalize, toPromptText, type MandalartContent, type Stage, type Target } from "../mandalart";
+import type { SchoolLevel } from "../school-level";
 
 export type DiagnosisItem = {
   category: Category;
@@ -99,7 +100,34 @@ const AiDiagnosis = z.object({
   concern: z.unknown().optional(),
 });
 
-const DIAGNOSIS_SYSTEM = `당신은 중학생의 만다라트(목표 설정 도구)를 진단하는 교육 평가 보조자입니다.
+// 학교급(학급 설정, src/lib/school-level.ts)마다 다른 문구. 대상 학생과 판단 기준 세 가지(GOAL_VAGUE, SUB_MISALIGNED,
+// ACTION_NOT_MEASURABLE), 엄격함만 다르고 나머지(범주, 규칙, 안전 신호)는 같습니다.
+// 중학교 문구는 학교급 설정이 생기기 전과 글자 하나까지 같습니다(tests/feedback.test.ts가 해시로 확인). 고치려면 테스트의 해시도 함께 고치세요.
+const DIAGNOSIS_LEVEL: Record<SchoolLevel, { who: string; goalVague: string; subMisaligned: string; notMeasurable: string; strictness: string }> = {
+  middle: {
+    who: "중학생",
+    goalVague: "중심 목표에 기간·수준·대상 중 어느 것도 드러나지 않아 이뤘는지 판단할 수 없을 때.",
+    subMisaligned: "세부 목표가 중심 목표 달성에 기여한다고 보기 어려울 때.",
+    notMeasurable: "행동은 맞지만 했는지 확인할 기준(횟수·시간·요일 등)이 전혀 없어 점검이 어려울 때.",
+    strictness: "중학생 수준을 고려해 지나치게 엄격하게 판단하지 마세요.",
+  },
+  high: {
+    who: "고등학생",
+    goalVague: "중심 목표에 기한(언제까지)과 이뤘는지 잴 수 있는 기준(점수·등급·횟수 등) 중 하나라도 빠졌을 때.",
+    // 진로·학업은 중심 목표가 그런 목표일 때만 봅니다. 받쳐 주는 영역(건강·관계 등)을 연결 약함으로 보면 UNBALANCED와 부딪힙니다.
+    subMisaligned:
+      "세부 목표가 중심 목표 달성에 어떻게 기여하는지 설명하기 어려울 때(중심 목표가 진로·학업에 관한 것이면 그 맥락에서 이어지는지도 봅니다. 건강·관계·마음 관리처럼 중심 목표를 받쳐 주는 영역은 기여하는 것으로 봅니다).",
+    // 셋 중 하나라도 있으면 해당하지 않습니다(셋 모두를 요구하지 않음).
+    notMeasurable:
+      "행동은 맞지만 횟수·시간·점검 방법 중 어느 것도 드러나지 않아 했는지 점검하기 어려울 때('자주', '꾸준히'처럼 막연한 말만 있으면 드러나지 않은 것으로 봅니다).",
+    strictness: "고등학생 수준에 맞게 위 기준을 분명히 적용하되, 맞춤법·띄어쓰기·말투 같은 사소한 표현은 지적하지 마세요.",
+  },
+};
+
+/** 진단 시스템 프롬프트. 학교급만 받습니다(학생 이름·번호·학급은 넣지 않음). */
+export function diagnosisSystem(level: SchoolLevel): string {
+  const t = DIAGNOSIS_LEVEL[level];
+  return `당신은 ${t.who}의 만다라트(목표 설정 도구)를 진단하는 교육 평가 보조자입니다.
 만다라트는 중심 목표 1개, 세부 목표 8개, 세부 목표마다 실천 행동 8개로 이루어집니다.
 
 진단만 하고 고쳐 쓰지 마세요. 진단 결과는 학생에게 보여 줄 피드백 카드를 고르는 데 쓰입니다.
@@ -108,11 +136,11 @@ const DIAGNOSIS_SYSTEM = `당신은 중학생의 만다라트(목표 설정 도�
 ${AI_CATEGORIES.map((k) => `- ${k}: ${CATEGORIES[k].label}`).join("\n")}
 
 판단 기준:
-- GOAL_VAGUE: 중심 목표에 기간·수준·대상 중 어느 것도 드러나지 않아 이뤘는지 판단할 수 없을 때. target_kind는 goal.
-- SUB_MISALIGNED: 세부 목표가 중심 목표 달성에 기여한다고 보기 어려울 때. target_kind는 sub.
+- GOAL_VAGUE: ${t.goalVague} target_kind는 goal.
+- SUB_MISALIGNED: ${t.subMisaligned} target_kind는 sub.
 - SUB_OVERLAP: 두 세부 목표가 사실상 같은 영역일 때. 뒤쪽 세부 목표를 target으로.
 - ACTION_NOT_ACTIONABLE: '열심히 하기', '노력하기', '긍정적으로 생각하기'처럼 구체 행동이 아닌 다짐. target_kind는 action.
-- ACTION_NOT_MEASURABLE: 행동은 맞지만 했는지 확인할 기준(횟수·시간·요일 등)이 전혀 없어 점검이 어려울 때. 짧고 분명한 행동(예: '물 마시기 하루 8잔')은 해당하지 않습니다.
+- ACTION_NOT_MEASURABLE: ${t.notMeasurable} 짧고 분명한 행동(예: '물 마시기 하루 8잔')은 해당하지 않습니다.
 - ACTION_MISALIGNED: 실천이 해당 세부 목표와 관계가 약할 때.
 - UNBALANCED: 세부 목표 대부분이 한 영역(예: 공부 과목만)에 몰려 있을 때. target_kind는 whole. 최대 1개.
 
@@ -121,7 +149,7 @@ ${AI_CATEGORIES.map((k) => `- ${k}: ${CATEGORIES[k].label}`).join("\n")}
 - sub, action은 입력에 표시된 0부터 시작하는 번호입니다. 해당 없으면 null.
 - severity: 3 = 목표 달성을 크게 막음, 2 = 고치면 분명히 나아짐, 1 = 사소함.
 - evidence는 학생이 쓴 표현을 인용해 한 문장으로, 왜 그 범주인지 씁니다.
-- 중학생 수준을 고려해 지나치게 엄격하게 판단하지 마세요. 문제가 없으면 items를 빈 배열로 둡니다.
+- ${t.strictness} 문제가 없으면 items를 빈 배열로 둡니다.
 - 최대 12개까지, 심각한 것부터 보고하세요.
 - 사용자 메시지의 '진단 범위'에 해당하는 칸만 보고하세요. 다른 칸은 맥락을 이해하는 데만 쓰세요.
 
@@ -140,6 +168,7 @@ ${AI_CATEGORIES.map((k) => `- ${k}: ${CATEGORIES[k].label}`).join("\n")}
   성적 걱정, '시험 때문에 힘들다'만 있는 경우, 친구와 한 번 다툰 일. 이런 내용만 있으면 false입니다.
 - flag가 false이면 kind는 null, true이면 kind에 위 여섯 가지 중 하나를 씁니다. concern은 항상 써야 합니다.
 - 안전 신호는 학생에게 보이지 않고 선생님이 살펴보도록 알려 주는 데만 씁니다. evidence나 다른 항목에 이 내용을 쓰지 마세요.`;
+}
 
 function scopeText(stage: Stage, c: MandalartContent): string {
   if (stage.kind === "core") {
@@ -186,9 +215,11 @@ function mockDiagnose(c: MandalartContent, stage: Stage): DiagnosisItem[] {
   return items.filter((it) => inStage(it.target, stage));
 }
 
+/** level: 학급의 학교급(피드백을 요청할 때 round.ts가 학급에서 읽음). AI에는 만다라트 글과 학교급에 맞춘 지시만 보냅니다. */
 export async function aiDiagnose(
   c: MandalartContent,
   stage: Stage,
+  level: SchoolLevel,
   note?: string,
   deadline?: number,
 ): Promise<{ items: DiagnosisItem[]; concern: Concern; meta: CallMeta | null }> {
@@ -199,7 +230,7 @@ export async function aiDiagnose(
   }
   const { data: parsed, meta } = await structuredCall({
     name: "mandalart_diagnosis",
-    system: DIAGNOSIS_SYSTEM,
+    system: diagnosisSystem(level),
     user: `다음 만다라트를 진단하세요.\n${scopeText(stage, c)}${note ? `\n${note}` : ""}\n\n${toPromptText(c)}`,
     schema: AiDiagnosis,
     responseSchema: AiDiagnosisWire,

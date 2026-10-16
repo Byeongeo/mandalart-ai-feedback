@@ -6,6 +6,7 @@ import LogoutButton from "@/components/LogoutButton";
 import CreateClassForm from "@/components/teacher/CreateClassForm";
 import ExportButtons from "@/components/teacher/ExportButtons";
 import AiStatusBanner from "@/components/teacher/AiStatusBanner";
+import AppUpdate from "@/components/teacher/AppUpdateCard";
 
 export default async function TeacherHome() {
   const t = await requireTeacherPage();
@@ -36,6 +37,9 @@ export default async function TeacherHome() {
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${c.is_open ? "bg-emerald-100 text-emerald-800" : "bg-stone-200 text-stone-600"}`}>
                     {c.is_open ? "열림" : "닫힘"}
                   </span>
+                  {c.school_level === "high" && (
+                    <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-800">고등학교</span>
+                  )}
                   {!c.require_pin && (
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900"
                       title="학생 PIN을 쓰지 않는 학급입니다. 학급 코드·번호·이름만으로 들어오므로, 시범 수업이 끝나면 학급 화면에서 PIN을 다시 켜세요.">
@@ -68,6 +72,8 @@ export default async function TeacherHome() {
       <p className="text-xs text-stone-500">
         CSV 파일에는 학생 이름이 들어 있습니다(PIN과 ⚠️ 안전 신호는 들어 있지 않음). 학교 개인정보 보관 기준에 맞게 보관하고, 메신저나 공개 드라이브에 올리지 마세요.
       </p>
+
+      <AppUpdate />
     </main>
   );
 }

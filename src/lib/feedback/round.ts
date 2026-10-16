@@ -11,6 +11,7 @@ import { aiDiagnose, ruleDiagnose, type DiagnosisItem } from "./diagnose";
 import { aiCards, issuePlans, selectItems, type CardDraft, type CardPlan } from "./cards";
 import { CARDS_PER_STAGE, NEW_CARDS_ON_RECHECK, type Category, type Concern, type RejectReason } from "./categories";
 import type { AiErrorCode } from "./ai-errors";
+import { roundSchoolLevel, toSchoolLevel, type SchoolLevel } from "../school-level";
 
 /**
  * 학생에게 그대로 보여 줄 수 있는 오류. code(화면 분기용):
@@ -50,7 +51,7 @@ async function logFeedbackError(studentId: string, info: { stage: string; block_
 
 type PrevRound = {
   id: string; round_no: number; stage: string; block_index: number | null; attempt: number; created_at: Date;
-  content_snapshot: unknown; n_cards: number; n_rejected: number;
+  content_snapshot: unknown; n_cards: number; n_rejected: number; school_level: string | null;
 };
 
 /** meta: 학생 화면의 저장 번호 정보(save-rules.ts). 다른 탭·기기가 더 나중에 고친 글로 피드백을 만들지 않으려고 봅니다. */
@@ -68,8 +69,10 @@ export async function requestFeedback(student: StudentRow, mandalartId: string, 
   // AI를 부르기 전에 행을 잠그고 확인한 뒤 '만드는 중' 표시를 잡습니다. 두 번 누르기·두 기기·여러 단계 동시 요청은
   // 하나만 통과하고 나머지는 409 busy로 돌려보내 유료 호출이 겹치지 않게 합니다. 표시는 끝나면(성공·실패 모두) 지웁니다.
   // 피드백은 이때 확인한 글로 만듭니다(확인과 표시 사이에 다른 기기가 저장한 글로 만들지 않게).
+  // 학급의 학교급(AI 진단 기준·카드 질문 수준)도 이때 읽습니다. 교사가 바꾸면 그다음 첫 피드백부터 적용됩니다(학급 행은 잠그지 않음).
+  // 확인 피드백은 그 단계 첫 피드백의 학교급을 따릅니다(claimedFeedback의 roundSchoolLevel).
   const pendingUntil = new Date(Date.now() + PENDING_LEASE_MS);
-  const content = await sql.begin(async (tx) => {
+  const { content, level } = await sql.begin(async (tx) => {
     const [m] = await tx<{ status: string; revision: number; content: unknown; pending: boolean }[]>`
       select status, revision, content, coalesce(feedback_pending_until > now(), false) as pending
       from mandalarts where id = ${mandalartId} and student_id = ${student.id}
@@ -86,11 +89,12 @@ export async function requestFeedback(student: StudentRow, mandalartId: string, 
     if (recentFailures >= MAX_RECENT_FAILURES) throw new FeedbackError(TOO_MANY_FAILURES_MESSAGE, 429, "too_many_failures");
     if (m.pending) throw new FeedbackError(BUSY_MESSAGE, 409, "busy");
     const parsed = MandalartContent.parse(m.content);
+    const [cls] = await tx<{ school_level: string }[]>`select school_level from classes where id = ${student.class_id}`;
     await tx`update mandalarts set feedback_pending_until = ${pendingUntil} where id = ${mandalartId}`;
-    return parsed;
+    return { content: parsed, level: toSchoolLevel(cls?.school_level) };
   });
   try {
-    return await claimedFeedback(student, mandalartId, stage, content, requestedAt, deadline);
+    return await claimedFeedback(student, mandalartId, stage, content, level, requestedAt, deadline);
   } finally {
     await sql`update mandalarts set feedback_pending_until = null
               where id = ${mandalartId} and feedback_pending_until = ${pendingUntil}`.catch(() => {});
@@ -99,7 +103,7 @@ export async function requestFeedback(student: StudentRow, mandalartId: string, 
 
 // '만드는 중' 표시를 잡은 뒤에 하는 일. 확인(회차·30초 간격)도 표시를 잡은 뒤에 해야 동시에 들어온 요청이 같은 확인을 통과하지 못합니다.
 async function claimedFeedback(
-  student: StudentRow, mandalartId: string, stage: Stage, content: MandalartContent, requestedAt: Date, deadline: number,
+  student: StudentRow, mandalartId: string, stage: Stage, content: MandalartContent, classLevel: SchoolLevel, requestedAt: Date, deadline: number,
 ) {
   const notReady = stageNotReady(stage, content);
   if (notReady) throw new FeedbackError(notReady, 400, "not_ready");
@@ -107,6 +111,7 @@ async function claimedFeedback(
   // n_rejected: 마지막 응답이 '안 할래요'인 문제 카드 수(모두 거부하면 그 단계는 끝난 것으로 봅니다)
   const prev = await sql<PrevRound[]>`
     select r.id, r.round_no, r.stage, r.block_index, r.attempt, r.created_at, r.content_snapshot,
+      r.diagnosis->>'school_level' as school_level,
       (select count(*)::int from feedback_cards c where c.round_id = r.id and c.kind = 'issue') as n_cards,
       (select count(*)::int from feedback_cards c where c.round_id = r.id and c.kind = 'issue'
          and (select fr.action from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1) = 'reject') as n_rejected
@@ -150,6 +155,9 @@ async function claimedFeedback(
     }
   }
 
+  // 이 회차의 학교급: 첫 피드백은 학급 설정, 확인 피드백은 그 단계 첫 피드백에 기록된 학교급('같은 기준으로 다시 판단'과 맞게).
+  const level = roundSchoolLevel(classLevel, attempt === 2 ? sameStage[0] : undefined);
+
   const last = prev[prev.length - 1];
   const waitMs = last ? MIN_INTERVAL_MS - (Date.now() - last.created_at.getTime()) : 0;
   if (waitMs > 0) {
@@ -167,8 +175,8 @@ async function claimedFeedback(
           .map((c) => `${c.category} @ ${targetKey(c.target)}`)
           .join(", ")}`
       : undefined;
-    // AI에는 만다라트 글만 보냅니다(학생 이름·번호·학급 없음).
-    const ai = await aiDiagnose(content, stage, prevNote, deadline);
+    // AI에는 만다라트 글과 학교급에 맞춘 지시만 보냅니다(학생 이름·번호·학급 없음).
+    const ai = await aiDiagnose(content, stage, level, prevNote, deadline);
     diagMeta = ai.meta;
     concern = ai.concern;
     allItems = [...rule, ...ai.items];
@@ -208,7 +216,7 @@ async function claimedFeedback(
       plans = [...recheck, ...issuePlans(fresh)];
     }
 
-    const out = await aiCards(content, plans, deadline);
+    const out = await aiCards(content, plans, level, deadline);
     cards = out.cards;
     cardMeta = out.meta;
   } catch (e) {
@@ -220,8 +228,9 @@ async function claimedFeedback(
     throw new FeedbackError("피드백을 만드는 중 문제가 생겼어요. 잠시 후 다시 눌러 주세요.", 503, "failed");
   }
 
-  // 진단 기록: 진단 항목, 카드로 고른 항목, 실제로 응답한 모델, 사용량(비용 확인용)
+  // 진단 기록: 진단 항목, 카드로 고른 항목, 실제로 응답한 모델, 사용량(비용 확인용), 이 회차에 쓴 학교급
   const diagnosis = {
+    school_level: level,
     items: allItems,
     selected: plans.map((p) => ({ category: p.item.category, target: p.item.target, kind: p.kind })),
     usage: { diagnosis: diagMeta?.usage ?? null, cards: cardMeta?.usage ?? null },

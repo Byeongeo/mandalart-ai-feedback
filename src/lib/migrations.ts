@@ -30,6 +30,13 @@ export const LATER_MIGRATIONS: readonly Migration[] = [
     id: "0002_class_require_pin",
     sql: `alter table classes add column if not exists require_pin boolean not null default true;`,
   },
+  {
+    // 학급마다 학교급('middle' = 중학교, 'high' = 고등학교, 기본 중학교). 이미 있는 학급은 중학교로 둡니다(상수 default라 표를 다시 쓰지 않고,
+    // check 제약은 기존 행을 한 번 훑어 확인만 함). AI 진단 기준과 카드 질문 수준만 바꿉니다(src/lib/school-level.ts).
+    // 열이 이미 있으면 check 제약도 함께 건너뜁니다(Postgres 16에서 여러 번 실행해 제약이 하나만 생기는 것을 확인).
+    id: "0003_class_school_level",
+    sql: `alter table classes add column if not exists school_level text not null default 'middle' check (school_level in ('middle', 'high'));`,
+  },
 ];
 
 /** 실행할 전체 목록(기본 스키마 + 이후 마이그레이션, 순서대로) */

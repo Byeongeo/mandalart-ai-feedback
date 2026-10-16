@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { REJECT_REASONS, type RejectReason } from "@/lib/feedback/categories";
 import {
-  stageDone as sharedStageDone, stageKey, stageLabel, stageNotReady, targetLabel, type MandalartContent, type Stage, type Target,
+  stageDone as sharedStageDone, stageKey, stageLabel, stageNotReady, targetLabel, zeroCardMessage, type MandalartContent, type Stage,
+  type Target,
 } from "@/lib/mandalart";
 
 export type CardView = {
@@ -461,9 +462,14 @@ export default function FeedbackPanel(props: {
       rs.map((r) => (r.id !== roundId ? r : { ...r, cards: r.cards.map((c) => (c.id === cardId ? { ...c, response: resp } : c)) })),
     );
 
+  // 카드가 한 장도 없는 회차 = 그 단계에서 규칙 진단·AI 진단 모두 고칠 점을 찾지 못한 첫 피드백(그 단계는 마친 것으로 봄).
+  // 확인 피드백은 카드가 가리킨 칸(또는 짝 칸)을 고쳐야 받을 수 있고, 고친 카드마다 '해결됨'이나 '아직 해결 안 됨' 카드가 생기므로
+  // 카드 없는 확인 피드백은 생기지 않습니다. 새 문제 없이 '해결됨'만 나온 확인 피드백에는 이 안내를 붙이지 않습니다
+  // ('안 할래요'로 두고 고치지 않은 카드는 다시 판단하지 않으므로, 고칠 점이 없다고 말할 수 없음).
+  // 제출한 뒤나 학급이 닫혀 볼 수만 있을 때(props.disabled)는 '넘어가세요/제출해도 좋아요' 없이 앞부분만 보여 줍니다.
   const renderRound = (r: RoundView, disabled: boolean) =>
     r.cards.length === 0 ? (
-      <p className="rounded-lg bg-stone-100 p-3 text-sm">이 부분에서는 고칠 점을 찾지 못했어요. 스스로 한 번 더 살펴보세요.</p>
+      <p className="rounded-lg bg-stone-100 p-3 text-sm">{zeroCardMessage(r.stage, props.disabled)}</p>
     ) : (
       <ul className="flex flex-col gap-2">
         {r.cards.map((c) => (

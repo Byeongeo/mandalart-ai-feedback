@@ -4,6 +4,7 @@ import { MOCK, structuredCall, type CallMeta } from "./client";
 import { CATEGORIES } from "./categories";
 import type { DiagnosisItem } from "./diagnose";
 import { targetKey, targetLabel, toPromptText, type MandalartContent } from "../mandalart";
+import type { SchoolLevel } from "../school-level";
 
 export type CardKind = "issue" | "resolved" | "unresolved";
 
@@ -65,13 +66,32 @@ const AiCards = z.object({
   cards: z.array(z.object({ index: z.number().int(), body: z.string() })),
 });
 
-const CARD_SYSTEM = `당신은 중학생이 만다라트(목표 설정 도구)를 스스로 고치도록 돕는 피드백 작성자입니다.
+// 학교급(학급 설정, src/lib/school-level.ts)마다 다른 문구. 대상 학생, 질문의 깊이, 읽는 사람만 다르고 길이(두 문장, 60~110자),
+// 답을 대신 써 주지 않기, 칭찬·인사말 빼기, 종류별 쓰는 방식은 같습니다.
+// 중학교 문구는 학교급 설정이 생기기 전과 글자 하나까지 같습니다(tests/feedback.test.ts가 해시로 확인). 고치려면 테스트의 해시도 함께 고치세요.
+const CARD_LEVEL: Record<SchoolLevel, { who: string; question: string }> = {
+  middle: {
+    who: "중학생",
+    question: "학생이 실제로 쓴 표현을 짚어서, 그 학생의 목표에 맞는 질문이나 방향을 제시하세요.",
+  },
+  high: {
+    who: "고등학생",
+    // 더 깊은 질문은 새 문제·아직 해결 안 됨 카드에만(해결됨 카드는 새 지적을 하지 않음), 그 항목에 맞을 때만(빈칸·반복·치우침 등에는 억지로 넣지 않음).
+    question:
+      "학생이 실제로 쓴 표현을 짚어서, 그 학생의 목표에 맞는 질문이나 방향을 제시하세요. 새 문제·아직 해결 안 됨 카드에서는 그 항목에 맞을 때 기한, 잴 수 있는 기준, 점검 방법처럼 한 걸음 더 깊이 생각하게 하는 질문을 하세요(해결됨 카드에는 넣지 마세요).",
+  },
+};
+
+/** 카드 시스템 프롬프트. 학교급만 받습니다(학생 이름·번호·학급은 넣지 않음). */
+export function cardSystem(level: SchoolLevel): string {
+  const t = CARD_LEVEL[level];
+  return `당신은 ${t.who}이 만다라트(목표 설정 도구)를 스스로 고치도록 돕는 피드백 작성자입니다.
 진단 결과 목록을 받으면, 항목마다 학생에게 보여 줄 피드백 카드 본문을 하나씩 씁니다.
 
 반드시 지킬 것:
 - 힌트만 주고 답을 대신 써 주지 마세요. 고친 문장을 완성해서 제시하지 마세요.
-- 학생이 실제로 쓴 표현을 짚어서, 그 학생의 목표에 맞는 질문이나 방향을 제시하세요.
-- 두 문장 이내, 공백 포함 60~110자. 중학생이 한눈에 읽을 수 있게 짧게 쓰세요.
+- ${t.question}
+- 두 문장 이내, 공백 포함 60~110자. ${t.who}이 한눈에 읽을 수 있게 짧게 쓰세요.
 - 친근한 존댓말(~해 보세요, ~일까요?)을 쓰고, 칭찬이나 인사말은 넣지 마세요.
 - 위치(몇 번 칸인지)는 화면에 따로 표시되므로 본문에 번호를 쓰지 마세요.
 - 빈칸 항목이면, 그 칸과 연결된 세부 목표나 중심 목표를 근거로 무엇을 떠올리면 좋을지 생각할 거리를 주세요.
@@ -82,6 +102,7 @@ const CARD_SYSTEM = `당신은 중학생이 만다라트(목표 설정 도구)�
 - 새 문제: 위 규칙대로 고칠 방향을 힌트로 줍니다.
 - 해결됨: 학생이 앞의 피드백을 반영해 그 칸을 고친 경우입니다. 고치기 전과 후를 비교해, 무엇이 나아졌는지 학생이 쓴 표현을 짚어 구체적으로 알려 주세요. '대단해요' 같은 사람에 대한 칭찬이 아니라 글이 어떻게 나아졌는지를 말하세요. 새로운 지적은 하지 마세요.
 - 아직 해결 안 됨: 학생이 고쳤지만(또는 고치지 않아서) 같은 문제가 남은 경우입니다. 처음보다 한 걸음 더 구체적인 힌트를 주세요. 그래도 완성 문장을 대신 써 주지는 마세요.`;
+}
 
 const KIND_LABEL: Record<CardKind, string> = { issue: "새 문제", resolved: "해결됨", unresolved: "아직 해결 안 됨" };
 
@@ -92,9 +113,11 @@ function missingCard(parsed: z.infer<typeof AiCards>, n: number): string | null 
   return null;
 }
 
+/** level: 학급의 학교급(피드백을 요청할 때 round.ts가 학급에서 읽음). */
 export async function aiCards(
   c: MandalartContent,
   plans: CardPlan[],
+  level: SchoolLevel,
   deadline?: number,
 ): Promise<{ cards: CardDraft[]; meta: CallMeta | null }> {
   if (plans.length === 0) return { cards: [], meta: null };
@@ -119,7 +142,7 @@ export async function aiCards(
     .join("\n");
   const { data: parsed, meta } = await structuredCall({
     name: "feedback_cards",
-    system: CARD_SYSTEM,
+    system: cardSystem(level),
     user: `학생의 만다라트:\n${toPromptText(c)}\n\n피드백 항목:\n${list}`,
     schema: AiCards,
     maxTokens: 4000,
