@@ -1,86 +1,37 @@
-# 앱 업데이트: 원본 저장소(Byeongeo/mandalart-ai-feedback)의 최신 코드를 내 저장소에 덮어씁니다.
-# 선생님이 GitHub > Actions > 앱 업데이트 > Run workflow 를 눌렀을 때만 실행됩니다(자동 실행 없음).
-#
-# - .github/ 폴더는 바꾸지 않습니다. 기본 토큰(GITHUB_TOKEN)은 workflow 파일을 고치는 push를 할 수 없기 때문입니다.
-# - 그 밖의 파일은 모두 원본과 똑같아집니다(내 저장소에서 직접 고친 내용은 덮어써집니다).
-# - 바뀐 것이 없으면 아무것도 하지 않습니다.
-# - main에 push하면 Vercel이 자동으로 다시 배포하고, 데이터베이스 표는 앱이 첫 요청 때 스스로 고칩니다.
-# - 커밋 작성자는 실행한 사람(선생님 GitHub 계정)으로 합니다. Vercel Hobby는 계정 주인이 아닌
-#   작성자(예: github-actions[bot])의 커밋 배포를 막을 수 있기 때문입니다.
-
+# 앱 업데이트: 원본(Byeongeo/mandalart-ai-feedback)의 최신 코드로 이 저장소를 덮어씁니다(.github 폴더는 그대로 둠).
+# Actions > 앱 업데이트 > Run workflow 를 눌렀을 때만 실행됩니다. 커밋 작성자는 실행한 사람입니다(Vercel Hobby 배포 조건).
 name: 앱 업데이트
-
 on:
   workflow_dispatch:
-
 permissions:
   contents: write
-
 concurrency:
   group: app-update
-  cancel-in-progress: false
-
 jobs:
   update:
-    name: 원본에서 최신 코드 받기
-    # 원본 저장소 자신에서는 실행하지 않습니다.
     if: github.repository != 'Byeongeo/mandalart-ai-feedback'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      UPSTREAM_URL: https://github.com/Byeongeo/mandalart-ai-feedback.git
-      UPSTREAM_BRANCH: main
-      TARGET_BRANCH: main
     steps:
-      - name: 내 저장소 가져오기
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 1
-
-      - name: 원본의 최신 코드로 바꾸기(.github 제외)
-        id: sync
-        shell: bash
+      - name: 원본에서 최신 코드 받기
         run: |
           set -euo pipefail
-
-          git fetch --no-tags --depth=1 "$UPSTREAM_URL" "$UPSTREAM_BRANCH"
-          upstream_sha="$(git rev-parse FETCH_HEAD)"
-          echo "원본 커밋: $upstream_sha"
-
-          # 색인과 작업 폴더를 원본 트리로 바꿉니다(원본에 없는 파일은 지워짐).
+          git fetch --no-tags --depth=1 https://github.com/Byeongeo/mandalart-ai-feedback.git main
+          sha="$(git rev-parse --short FETCH_HEAD)"
           git read-tree --reset -u FETCH_HEAD
-
-          # .github/ 는 내 저장소에 있던 그대로 되돌립니다.
           git rm -r -q --cached --ignore-unmatch -- .github
           rm -rf .github
-          if git cat-file -e HEAD:.github 2>/dev/null; then
-            git checkout HEAD -- .github
-          fi
-
+          if git cat-file -e HEAD:.github 2>/dev/null; then git checkout HEAD -- .github; fi
           if git diff --cached --quiet HEAD; then
-            echo "이미 최신입니다. 바꿀 것이 없습니다."
             echo "✅ 이미 최신입니다. 바꿀 것이 없습니다." >> "$GITHUB_STEP_SUMMARY"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "바뀌는 파일:"
-            git diff --cached --stat HEAD
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "upstream_short=${upstream_sha:0:7}" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-
-      - name: 커밋하고 올리기
-        if: steps.sync.outputs.changed == 'true'
-        shell: bash
-        env:
-          ACTOR: ${{ github.actor }}
-          ACTOR_ID: ${{ github.actor_id }}
-          UPSTREAM_SHORT: ${{ steps.sync.outputs.upstream_short }}
-        run: |
-          set -euo pipefail
-          git config user.name "$ACTOR"
-          git config user.email "${ACTOR_ID}+${ACTOR}@users.noreply.github.com"
-          git commit -q -m "앱 업데이트: 원본 ${UPSTREAM_SHORT} 반영"
-          git push origin "HEAD:${TARGET_BRANCH}"
-          echo "올렸습니다. Vercel이 곧 다시 배포합니다(Vercel > Deployments 에서 확인)."
-          echo "✅ 원본 ${UPSTREAM_SHORT} 을(를) 반영했습니다. 몇 분 뒤 Vercel > Deployments 에서 새 배포가 Ready 인지 확인하세요." >> "$GITHUB_STEP_SUMMARY"
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+          git commit -q -m "앱 업데이트: 원본 $sha 반영"
+          git push origin HEAD:main
+          echo "✅ 원본 $sha 을(를) 반영했습니다. 몇 분 뒤 Vercel > Deployments 에서 새 배포가 Ready 인지 확인하세요." >> "$GITHUB_STEP_SUMMARY"
