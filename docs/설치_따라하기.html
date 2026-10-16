@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- 만다라트 AI 피드백 앱 설치 따라하기. 이 파일을 내려받아 브라우저(크롬·엣지 등)로 열면 됩니다. 인터넷 연결이 필요합니다. -->
+<style>
+:root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+<title>만다라트 앱 설치 따라하기</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@700;800&family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* 레이아웃: 위쪽에 3×3 만다라트(가운데 = 완성, 둘레 8칸 = 단계), 아래에 지금 단계 한 장. 넓은 화면에서는 왼쪽 판, 오른쪽 단계. */
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --ink: #18202e;
+  --muted: #5b6577;
+  --line: #d8dee8;
+  --primary: #2a56c6;
+  --primary-ink: #ffffff;
+  --primary-soft: #e6edfb;
+  --done: #1d7f55;
+  --done-soft: #e2f3ea;
+  --warn: #9a4a12;
+  --warn-soft: #fbeedd;
+  --goal: #c98a00;
+  --goal-soft: #fff4d6;
+  --code-bg: #eef1f6;
+  --display: "Gothic A1", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151d; --surface: #1a202b; --ink: #e7ebf2; --muted: #9aa5b7; --line: #2f3747;
+    --primary: #7d9ff0; --primary-ink: #0e1420; --primary-soft: #1f2a44;
+    --done: #5cc495; --done-soft: #17322a; --warn: #f0a46a; --warn-soft: #3a2616;
+    --goal: #f2c14e; --goal-soft: #3a2f12; --code-bg: #232b38; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151d; --surface: #1a202b; --ink: #e7ebf2; --muted: #9aa5b7; --line: #2f3747;
+  --primary: #7d9ff0; --primary-ink: #0e1420; --primary-soft: #1f2a44;
+  --done: #5cc495; --done-soft: #17322a; --warn: #f0a46a; --warn-soft: #3a2616;
+  --goal: #f2c14e; --goal-soft: #3a2f12; --code-bg: #232b38; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.65;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; display: grid; gap: 24px; }
+header h1 { font-family: var(--display); font-weight: 800; font-size: clamp(1.6rem, 4vw, 2.2rem); line-height: 1.25; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+header p { margin: 6px 0 0; color: var(--muted); max-width: 62ch; }
+.layout { display: grid; gap: 24px; grid-template-columns: 1fr; align-items: start; }
+@media (min-width: 900px) { .layout { grid-template-columns: 320px minmax(0, 1fr); } .board-col { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); } }
+.board-col { display: grid; gap: 14px; min-width: 0; }
+.board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; aspect-ratio: 1 / 1; max-width: 100%; width: min(100%, 360px); }
+.cell {
+  border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px;
+  font: 600 0.82rem/1.3 var(--body); padding: 6px; display: grid; align-content: center; justify-items: center; gap: 2px;
+  text-align: center; cursor: pointer; min-width: 0; word-break: keep-all;
+}
+.cell .n { font: 500 0.72rem var(--mono); color: var(--muted); }
+.cell:hover { border-color: var(--primary); }
+.cell:focus-visible, button:focus-visible, a.btn:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.cell.current { border-color: var(--primary); box-shadow: inset 0 0 0 2px var(--primary); }
+.cell.done { background: var(--done-soft); border-color: var(--done); }
+.cell.done .n::after { content: " ✓"; color: var(--done); }
+.cell.goal { background: var(--goal-soft); border-color: var(--goal); font-family: var(--display); font-weight: 800; font-size: 0.95rem; }
+.cell.goal.complete { background: var(--goal); color: var(--primary-ink); }
+.meter { font-size: 0.9rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.saved { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; font-size: 0.88rem; display: grid; gap: 6px; min-width: 0; }
+.saved b { font-weight: 600; }
+.saved .v { font-family: var(--mono); font-size: 0.82rem; overflow-wrap: anywhere; color: var(--muted); }
+.step { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: clamp(18px, 3vw, 28px); display: grid; gap: 18px; min-width: 0; }
+.step-head { display: grid; gap: 4px; }
+.eyebrow { font: 600 0.78rem var(--body); letter-spacing: 0.08em; color: var(--primary); }
+.step h2 { font-family: var(--display); font-weight: 800; font-size: clamp(1.3rem, 3vw, 1.65rem); margin: 0; line-height: 1.3; text-wrap: balance; }
+.step .lead { margin: 0; color: var(--muted); max-width: 64ch; }
+.time { font-size: 0.85rem; color: var(--muted); }
+ol.actions { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: a; }
+ol.actions > li { counter-increment: a; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+ol.actions > li::before { content: counter(a); width: 30px; height: 30px; border-radius: 50%; background: var(--primary-soft); color: var(--primary); font: 600 0.9rem/30px var(--mono); text-align: center; }
+.act { display: grid; gap: 8px; min-width: 0; }
+.act p { margin: 0; max-width: 66ch; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn, button.btn {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 10px 16px; border-radius: 9px;
+  border: 1.5px solid var(--primary); background: var(--primary); color: var(--primary-ink); font: 600 0.98rem var(--body);
+  text-decoration: none; cursor: pointer;
+}
+.btn.ghost { background: transparent; color: var(--primary); }
+.btn.big { min-height: 54px; font-size: 1.06rem; padding: 12px 22px; }
+.btn[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
+.btn .arrow { font-family: var(--mono); }
+kbd, .k { font-family: var(--mono); font-size: 0.86em; background: var(--code-bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; overflow-wrap: anywhere; }
+.label { font-weight: 600; }
+.checks { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.checks label { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: start; cursor: pointer; }
+.checks input { width: 20px; height: 20px; margin: 3px 0 0; accent-color: var(--done); }
+.note { border-radius: var(--radius); padding: 12px 14px; font-size: 0.93rem; display: grid; gap: 4px; }
+.note.warn { background: var(--warn-soft); color: var(--ink); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
+.note.warn strong { color: var(--warn); }
+.note.tip { background: var(--primary-soft); }
+.field { display: grid; gap: 6px; min-width: 0; }
+.field input { font: 500 1rem var(--mono); padding: 11px 12px; border-radius: 8px; border: 1.5px solid var(--line); background: var(--bg); color: var(--ink); width: 100%; min-width: 0; }
+.field .hint { font-size: 0.85rem; color: var(--muted); }
+.field .err { font-size: 0.85rem; color: var(--warn); }
+.codebox { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.codebox code { font: 500 1.05rem var(--mono); background: var(--code-bg); border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px; overflow-wrap: anywhere; min-width: 0; flex: 1 1 260px; letter-spacing: 0.03em; }
+.toast { font-size: 0.88rem; color: var(--done); min-height: 1.4em; }
+details.help { border-top: 1px solid var(--line); padding-top: 12px; }
+details.help summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+details.help ul { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 0.93rem; }
+.nav { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; border-top: 1px solid var(--line); padding-top: 16px; }
+.nav .right { display: flex; gap: 10px; flex-wrap: wrap; }
+.done-badge { color: var(--done); font-weight: 600; font-size: 0.92rem; }
+table.summary { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+table.summary th, table.summary td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.summary th { width: 34%; font-weight: 600; color: var(--muted); }
+table.summary td { overflow-wrap: anywhere; font-family: var(--mono); font-size: 0.86rem; }
+.table-wrap { overflow-x: auto; }
+footer { color: var(--muted); font-size: 0.85rem; max-width: 70ch; }
+@media (prefers-reduced-motion: no-preference) { .step { animation: rise .25s ease-out; } @keyframes rise { from { transform: translateY(6px); opacity: .6 } to { transform: none; opacity: 1 } } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1>만다라트 AI 피드백 앱, 내 계정에 설치하기</h1>
+    <p>위에서부터 차례대로 버튼을 누르고, 확인 칸에 체크하면 됩니다. 칸 하나가 끝날 때마다 아래 만다라트가 한 칸씩 채워지고, 8칸이 다 차면 가운데 <b>내 앱 완성</b>이 켜집니다. 처음 해도 30분 안팎입니다.</p>
+  </header>
+
+  <div class="layout">
+    <aside class="board-col" aria-label="진행 상황">
+      <div class="board" id="board" role="list"></div>
+      <div class="meter" id="meter">0 / 8 단계 완료</div>
+      <div class="saved" id="savedBox" aria-live="polite"></div>
+    </aside>
+    <main id="stepHost"></main>
+  </div>
+
+  <footer>
+    이 페이지에 적은 값(GitHub 아이디, 앱 주소, 설정 코드, 체크 표시)은 <b>지금 쓰는 이 브라우저에만</b> 저장되고 다른 곳으로 보내지지 않습니다. 공용 컴퓨터라면 다 끝난 뒤 맨 마지막 단계의 <b>이 컴퓨터에서 지우기</b>를 누르세요. OpenRouter API 키는 이 페이지에 넣지 않습니다.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var DEPLOY_URL = "https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FByeongeo%2Fmandalart-ai-feedback&project-name=mandalart&repository-name=mandalart&env=OPENROUTER_API_KEY,SETUP_TOKEN&envDescription=OpenRouter%20API%20%ED%82%A4%EC%99%80%20%EC%84%A4%EC%A0%95%20%EC%BD%94%EB%93%9C%2820%EC%9E%90%20%EC%9D%B4%EC%83%81%20%EB%AC%B4%EC%9E%91%EC%9C%84%2C%20%EA%B5%90%EC%82%AC%20%EA%B3%84%EC%A0%95%20%EB%A7%8C%EB%93%A4%EA%B8%B0%EC%99%80%20%EB%B9%84%EB%B0%80%EB%B2%88%ED%98%B8%20%EB%8B%A4%EC%8B%9C%20%EC%A0%95%ED%95%98%EA%B8%B0%EC%97%90%20%EC%94%80%29%EB%A5%BC%20%EB%84%A3%EC%9C%BC%EC%84%B8%EC%9A%94.&envLink=https%3A%2F%2Fgithub.com%2FByeongeo%2Fmandalart-ai-feedback%2Fblob%2Fmain%2Fdocs%2F%EC%84%A4%EC%B9%98_%EC%95%88%EB%82%B4.md&stores=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22neon%22%2C%22productSlug%22%3A%22neon%22%2C%22protocol%22%3A%22storage%22%7D%5D";
+  var GUIDE_URL = "https://github.com/Byeongeo/mandalart-ai-feedback/blob/main/docs/%EC%84%A4%EC%B9%98_%EC%95%88%EB%82%B4.md";
+  var KEY = "mandalart-install-v1";
+
+  var state = { step: 0, github: "", repo: "mandalart", app: "", code: "", done: {}, checks: {} };
+  try { var raw = localStorage.getItem(KEY); if (raw) { var s = JSON.parse(raw); if (s && typeof s === "object") Object.assign(state, s); } } catch (e) {}
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+
+  function esc(t) { return String(t).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function appBase() { return state.app; }
+  function repoUrl() { return state.github ? "https://github.com/" + encodeURIComponent(state.github) + "/" + encodeURIComponent(state.repo || "mandalart") : ""; }
+  function link(href, text, opts) {
+    opts = opts || {};
+    var cls = "btn" + (opts.ghost ? " ghost" : "") + (opts.big ? " big" : "");
+    if (!href) return '<span class="' + cls + '" aria-disabled="true" title="' + esc(opts.need || "앞 단계를 먼저 해 주세요") + '">' + esc(text) + ' <span class="arrow">↗</span></span>';
+    return '<a class="' + cls + '" href="' + esc(href) + '" target="_blank" rel="noopener noreferrer">' + esc(text) + ' <span class="arrow">↗</span></a>';
+  }
+  function copyBtn(value, text, id) { return '<button type="button" class="btn ghost" data-copy="' + esc(value) + '" id="' + id + '">' + esc(text) + '</button>'; }
+  function checks(stepKey, items) {
+    return '<ul class="checks">' + items.map(function (t, i) {
+      var k = stepKey + ":" + i, on = state.checks[k] ? " checked" : "";
+      return '<li><label><input type="checkbox" data-check="' + k + '" id="ck-' + k.replace(":", "-") + '"' + on + '><span>' + t + '</span></label></li>';
+    }).join("") + "</ul>";
+  }
+  function need(t) { return '<p class="hint">' + t + "</p>"; }
+
+  var STEPS = [
+    { key: "github", short: "GitHub 계정", title: "GitHub 계정 준비", time: "약 3분",
+      lead: "앱 코드가 복사되어 들어갈 곳입니다. 학교(교육청) 계정은 외부 로그인이 막힌 경우가 많으니 <b>개인 이메일</b>로 만드세요.",
+      body: function () {
+        return '<ol class="actions">' +
+          '<li><div class="act"><p>계정이 없으면 가입하고, 있으면 로그인합니다.</p><div class="row">' + link("https://github.com/signup", "GitHub 가입하기", { big: true }) + link("https://github.com/login", "이미 있어요: 로그인", { ghost: true }) + '</div></div></li>' +
+          '<li><div class="act"><p>로그인한 뒤 오른쪽 위 동그란 프로필 그림을 누르면 보이는 <b>내 아이디</b>를 아래에 적습니다. 뒤 단계의 버튼들이 이 아이디로 내 저장소를 찾아갑니다.</p>' +
+          '<div class="field"><label class="label" for="in-github">내 GitHub 아이디</label><input id="in-github" autocomplete="off" spellcheck="false" placeholder="예: hong-teacher" value="' + esc(state.github) + '"><span class="err" id="err-github"></span></div></div></li>' +
+          "</ol>" + checks("github", ["GitHub에 로그인되어 있습니다.", "내 아이디를 위 칸에 적었습니다."]);
+      },
+      help: ["이메일 인증 메일이 안 오면 스팸함을 확인하세요.", "아이디는 영문·숫자·하이픈(-)만 됩니다. 프로필 주소 <span class=\"k\">github.com/아이디</span> 의 그 부분입니다."] },
+
+    { key: "vercel", short: "Vercel 계정", title: "Vercel 계정 만들기", time: "약 2분",
+      lead: "학생과 교사가 접속하는 웹 앱이 올라가는 곳입니다. 무료(Hobby)로 씁니다.",
+      body: function () {
+        return '<ol class="actions">' +
+          '<li><div class="act"><p>아래 버튼을 누르고 <b>Hobby</b>를 고른 뒤 이름을 넣고, <b>Continue with GitHub</b>를 누릅니다. 이미 계정이 있으면 로그인만 합니다.</p><div class="row">' + link("https://vercel.com/signup", "Vercel 가입하기", { big: true }) + link("https://vercel.com/login", "이미 있어요: 로그인", { ghost: true }) + "</div></div></li>" +
+          '<li><div class="act"><p>GitHub 권한을 묻는 화면이 나오면 <b>Authorize</b>(허용)를 누릅니다. 결제 수단은 넣지 않아도 됩니다.</p></div></li>' +
+          "</ol>" + checks("vercel", ["Vercel에 GitHub 계정으로 로그인되어 있습니다.", "플랜이 Hobby(무료)입니다."]);
+      },
+      help: ["'Pro'를 고르라는 화면이 나오면 Hobby로 바꾸세요. Hobby는 개인·비영리용 무료 플랜입니다."] },
+
+    { key: "openrouter", short: "AI 키", title: "OpenRouter 충전하고 API 키 만들기", time: "약 5분",
+      lead: "AI 피드백 사용료를 내는 곳입니다. 30명 학급이 여러 번 수업해도 5달러면 충분합니다(학급 1회 전체 과정 약 2달러 안팎).",
+      body: function () {
+        return '<ol class="actions">' +
+          '<li><div class="act"><p>OpenRouter에 가입합니다(Google 또는 이메일).</p><div class="row">' + link("https://openrouter.ai/", "OpenRouter 열기", { big: true }) + "</div></div></li>" +
+          '<li><div class="act"><p><b>Credits</b>에서 신용카드로 <b>5달러</b>를 충전합니다. 소액 수수료가 붙을 수 있습니다.</p><div class="row">' + link("https://openrouter.ai/settings/credits", "Credits 열기") + "</div></div></li>" +
+          '<li><div class="act"><p><b>Keys</b>에서 <b>Create Key</b>를 누릅니다. 이름은 <span class="k">mandalart</span>, <b>Credit limit</b>(사용 한도)은 <span class="k">5</span>로 적습니다. 키가 새어 나가도 이 금액 넘게는 쓰이지 않습니다.</p><div class="row">' + link("https://openrouter.ai/settings/keys", "Keys 열기") + "</div></div></li>" +
+          '<li><div class="act"><p>나온 키(<span class="k">sk-or-v1-…</span>로 시작)를 <b>바로 복사해 메모장에 붙여 두세요.</b> 그 창을 닫으면 다시 볼 수 없습니다. 5단계에서 씁니다.</p></div></li>' +
+          '</ol><div class="note warn"><strong>API 키는 비밀번호와 같습니다.</strong><span>이 페이지, 메신저, 단체방, 공유 문서에는 붙여 넣지 마세요.</span></div>' +
+          checks("openrouter", ["5달러를 충전했습니다.", "사용 한도 5달러로 키를 만들었습니다.", "키를 메모장에 붙여 두었습니다."]);
+      },
+      help: ["키를 잃어버렸으면 Keys에서 그 키를 지우고(Delete) 새로 만들면 됩니다.", "충전이 안 되면 해외 결제가 되는 카드인지 확인하세요."] },
+
+    { key: "code", short: "설정 코드", title: "설정 코드 만들기", time: "약 1분",
+      lead: "선생님만 아는 긴 암호입니다. 첫 교사 계정을 만들 때와 교사 비밀번호를 잊었을 때 씁니다. 아래 버튼이 무작위 24자를 만들어 줍니다.",
+      body: function () {
+        var has = !!state.code;
+        return '<ol class="actions">' +
+          '<li><div class="act"><p>' + (has ? "만들어 둔 설정 코드입니다." : "버튼을 눌러 설정 코드를 만듭니다.") + '</p>' +
+          (has ? '<div class="codebox"><code id="codeText">' + esc(state.code) + "</code>" + copyBtn(state.code, "복사", "copy-code") + "</div>" : "") +
+          '<div class="row"><button type="button" class="btn' + (has ? " ghost" : " big") + '" id="gen-code">' + (has ? "새로 만들기" : "설정 코드 만들기") + "</button></div>" +
+          (has ? '<p class="hint">새로 만들면 위 코드는 사라집니다. 이미 5단계에서 Vercel에 넣었다면 새로 만들지 마세요.</p>' : "") + "</div></li>" +
+          '<li><div class="act"><p><b>복사</b>를 눌러 OpenRouter 키 아래에 같이 메모해 두세요. 비밀번호 관리자가 있으면 거기에 저장하는 것이 가장 안전합니다.</p></div></li>' +
+          "</ol>" + checks("code", ["설정 코드를 메모장(또는 비밀번호 관리자)에 저장했습니다."]) +
+          '<div class="note tip"><span>이 코드를 아는 사람은 교사 비밀번호를 새로 정할 수 있습니다. 누구에게도 알려 주지 마세요.</span></div>';
+      },
+      help: ["코드가 새어 나갔으면 Vercel > 프로젝트 > Settings > Environment Variables에서 SETUP_TOKEN을 바꾸고 Redeploy 하세요(설치 안내 6-2)."] },
+
+    { key: "deploy", short: "설치 버튼", title: "설치 버튼 누르기 (한 번만)", time: "약 7분",
+      lead: "원본 앱을 내 GitHub에 복사하고, 데이터베이스(Neon)를 만들고, Vercel에 올리는 일을 한 번에 합니다.",
+      body: function () {
+        return '<div class="note warn"><strong>이 버튼은 한 번만 누르세요.</strong><span>누를 때마다 저장소·앱·데이터베이스가 새로 하나씩 생깁니다. 이미 설치했다면 6단계로 넘어가세요.</span></div>' +
+          '<ol class="actions">' +
+          '<li><div class="act"><p>설치 버튼을 누릅니다. Vercel이 열립니다.</p><div class="row">' + link(DEPLOY_URL, "Vercel로 설치하기", { big: true }) + "</div></div></li>" +
+          '<li><div class="act"><p><b>저장소 이름</b>: <b>Private Repository Name</b>은 <span class="k">mandalart</span> 그대로, 오른쪽 자물쇠 🔒가 켜진 채로 두고 <b>Create</b>를 누릅니다.</p>' +
+          '<div class="field"><label class="label" for="in-repo">저장소 이름을 바꿨다면 여기에도 같게 적어 주세요</label><input id="in-repo" autocomplete="off" spellcheck="false" value="' + esc(state.repo || "mandalart") + '"></div></div></li>' +
+          '<li><div class="act"><p><b>Neon</b> 칸의 <b>Add</b>를 누르고 작은 창에서 아래를 차례로 합니다.</p>' +
+          checks("neon", [
+            "<b>Region</b> 칸에 <span class=\"k\">Singapore</span>를 입력하고, 아래 목록의 <b>Singapore (Southeast)</b>를 <b>마우스로 눌러</b> 골랐습니다.",
+            "<b>Auth</b> 스위치를 <b>껐습니다</b>(처음엔 켜져 있음). <b>Realtime</b>도 꺼져 있습니다.",
+            "<b>Free</b>를 골랐습니다(‘no credit card required’, 카드 필요 없음).",
+            "마지막 확인 화면에 <span class=\"k\">Singapore (Southeast) sin1</span>이 보이는 것을 확인하고 <b>Create</b>를 눌렀습니다."
+          ]) +
+          '<p class="hint">확인 화면에 Cleveland 같은 다른 지역이 보이면 Create를 누르지 말고 Back으로 돌아가 다시 고르세요. 지역은 나중에 바꿀 수 없습니다.</p></div></li>' +
+          '<li><div class="act"><p><b>값 두 개</b>를 붙여 넣습니다. 이름 옆 칸에 넣으면 됩니다.</p>' +
+          '<div class="row"><span class="k">OPENROUTER_API_KEY</span> <span>← 메모해 둔 OpenRouter 키</span></div>' +
+          '<div class="row"><span class="k">SETUP_TOKEN</span> <span>← 4단계 설정 코드</span>' + (state.code ? copyBtn(state.code, "설정 코드 복사", "copy-code2") : '<span class="hint">(4단계에서 먼저 만드세요)</span>') + "</div>" +
+          '<p class="hint">앞뒤에 빈칸이 들어가지 않게 붙여 넣으세요.</p></div></li>' +
+          '<li><div class="act"><p><b>Deploy</b>를 누르고 2~4분 기다립니다. <b>Congratulations!</b> 화면이 나오면 성공입니다. 미리보기 그림에서 한글이 빈칸으로 보이는 것은 정상입니다.</p></div></li>' +
+          "</ol>" + checks("deploy", ["Congratulations! 화면이 나왔습니다."]);
+      },
+      help: [
+        "빨간 글씨 ‘A repository named \"mandalart\" already exists’가 나오면 이미 설치한 것입니다. Create를 누르지 말고 창을 닫은 뒤 6단계로 가세요.",
+        "Neon 창에서 지역을 잘못 만들었다면 Vercel > 프로젝트 > Storage에서 그 데이터베이스를 지우고 Singapore로 다시 만든 뒤 Redeploy 하세요(설치 안내 2-3).",
+        "빌드가 실패(Error)하면 Deployments에서 맨 위 항목의 ⋯ > Redeploy를 한 번 눌러 보세요."
+      ] },
+
+    { key: "teacher", short: "교사 계정", title: "내 앱 주소 저장하고 교사 계정 만들기", time: "약 3분",
+      lead: "Congratulations 화면에서 <b>Continue to Dashboard</b>를 누르면 앱 주소가 보입니다. 그 주소를 아래에 적으면 버튼들이 내 앱으로 연결됩니다.",
+      body: function () {
+        var base = appBase();
+        return '<ol class="actions">' +
+          '<li><div class="act"><p>대시보드의 <b>Domains</b>에 있는 주소(예: <span class="k">mandalart-abcd.vercel.app</span>)를 복사해 붙여 넣습니다.</p><div class="row">' + link("https://vercel.com/dashboard", "Vercel 대시보드 열기", { ghost: true }) + "</div>" +
+          '<div class="field"><label class="label" for="in-app">내 앱 주소</label><input id="in-app" autocomplete="off" spellcheck="false" inputmode="url" placeholder="https://mandalart-abcd.vercel.app" value="' + esc(state.app) + '"><span class="err" id="err-app"></span></div></div></li>' +
+          '<li><div class="act"><p>교사 계정 만들기 화면을 엽니다. 위쪽에 ✅ 두 줄(데이터베이스 연결, 설정 코드 준비)이 보이면 정상입니다.</p><div class="row">' + link(base ? base + "/teacher/setup" : "", "교사 계정 만들기 화면 열기", { big: true, need: "위에 앱 주소를 먼저 적어 주세요" }) + "</div></div></li>" +
+          '<li><div class="act"><p><b>설정 코드</b>, <b>아이디</b>(3자 이상), <b>표시 이름</b>, <b>비밀번호</b>(10자 이상), <b>비밀번호 확인</b>을 넣고 <b>교사 계정 만들기</b>를 누릅니다.</p>' + (state.code ? '<div class="row">' + copyBtn(state.code, "설정 코드 복사", "copy-code3") + "</div>" : "") + "</div></li>" +
+          "</ol>" + checks("teacher", ["✅ 두 줄을 확인했습니다.", "교사 계정을 만들어 교사 화면에 들어왔습니다.", "교사 아이디와 비밀번호를 메모해 두었습니다."]);
+      },
+      help: ["⚠️ 'DATABASE_URL이 없습니다'류 문구가 나오면 Neon 연결이 안 된 것입니다. Vercel > 프로젝트 > Storage에서 Neon이 연결(Connected)되어 있는지 보세요.", "⚠️ 설정 코드 문구가 나오면 Vercel > Settings > Environment Variables의 SETUP_TOKEN을 확인하고 Redeploy 하세요.", "다음부터 교사 화면은 앱 주소 뒤에 /teacher/login 으로 들어갑니다."] },
+
+    { key: "check", short: "설치 확인", title: "AI 연결 확인하고 연습반으로 시험하기", time: "약 5분",
+      lead: "실제 학생이 쓰기 전에 연습용 학급 하나로 처음부터 끝까지 확인합니다.",
+      body: function () {
+        var base = appBase();
+        return '<ol class="actions">' +
+          '<li><div class="act"><p>교사 화면 위쪽의 <b>AI 연결 확인</b>을 누릅니다(최대 30초). <b>✅ AI 연결 정상</b>이 나오면 됩니다.</p><div class="row">' + link(base ? base + "/teacher" : "", "교사 화면 열기", { need: "6단계에서 앱 주소를 먼저 적어 주세요" }) + "</div></div></li>" +
+          '<li><div class="act"><p><b>학급 만들기</b>에서 이름 <span class="k">연습반</span>, 명렬표 <span class="k">1 테스트</span>처럼 학생 1명만 넣어 만듭니다. 학교급과 학생 PIN 사용은 기본값 그대로 둡니다.</p></div></li>' +
+          '<li><div class="act"><p>학급 화면에서 <b>학생 PIN 보기</b>를 켜고, 휴대폰으로 학생 화면을 엽니다. 학급 코드, 번호 1, 이름 테스트, PIN을 넣고 <b>시작하기</b>를 누릅니다.</p><div class="row">' + link(base ? base + "/" : "", "학생 화면 열기", { ghost: true, need: "6단계에서 앱 주소를 먼저 적어 주세요" }) + "</div></div></li>" +
+          '<li><div class="act"><p>가운데 9칸(중심 목표, 세부 목표 8개)을 채우고 피드백을 받아 봅니다. 카드가 나오거나 “AI가 보기에 이 단계에는 고칠 점이 없어요”가 나오면 성공입니다.</p></div></li>' +
+          '<li><div class="act"><p>다 봤으면 연습반 학급 화면 맨 아래 <b>학급 지우기</b>에 학급 코드를 똑같이 적고 지웁니다.</p></div></li>' +
+          "</ol>" + checks("check", ["✅ AI 연결 정상이 나왔습니다.", "연습 학생으로 피드백을 받아 봤습니다.", "연습반을 지웠습니다."]);
+      },
+      help: ["AI 연결 확인에서 ⚠️가 나오면 나온 문구 그대로 설치 안내 9번 ‘AI 오류 문구 읽는 법’을 보세요. 키 오류(401)는 OPENROUTER_API_KEY를, 402는 OpenRouter 잔액을 확인합니다.", "학생 화면에서 ‘학급 코드, 번호, 이름, PIN을 확인해 주세요.’가 나오면 학생 PIN 보기에서 PIN을 다시 확인하세요."] },
+
+    { key: "update", short: "업데이트 기능", title: "업데이트 기능 설치 (처음 한 번)", time: "약 2분",
+      lead: "원본 앱이 고쳐졌을 때 버튼 하나로 받으려면, 내 저장소에 업데이트 기능을 한 번 넣어 둡니다.",
+      body: function () {
+        var base = appBase(), r = repoUrl();
+        return '<ol class="actions">' +
+          '<li><div class="act"><p>교사 화면 맨 아래 <b>앱 업데이트</b> 카드를 열고 <b>업데이트 기능 설치 (처음 한 번)</b>을 누릅니다.</p><div class="row">' + link(base ? base + "/teacher" : "", "교사 화면 열기", { need: "6단계에서 앱 주소를 먼저 적어 주세요" }) + "</div></div></li>" +
+          '<li><div class="act"><p>GitHub 새 파일 화면이 열리고 내용이 채워져 있습니다. 오른쪽 위 초록 <b>Commit changes…</b>를 누르고, 나온 창의 초록 <b>Commit changes</b>를 한 번 더 누릅니다.</p></div></li>' +
+          '<li><div class="act"><p>내 저장소의 <b>Actions</b>에 <b>앱 업데이트</b>가 생겼는지 봅니다.</p><div class="row">' + link(r ? r + "/actions" : "", "내 저장소 Actions 열기", { ghost: true, need: "1단계에서 GitHub 아이디를 먼저 적어 주세요" }) + "</div></div></li>" +
+          "</ol>" + checks("update", ["Commit changes를 눌렀습니다.", "Actions 왼쪽 목록에 ‘앱 업데이트’가 보입니다."]) +
+          '<div class="note tip"><span>나중에 교사 화면 카드에 <b>새 버전이 있어요</b>가 뜨면, 수업이 없는 시간에 카드의 <b>업데이트 받기</b> → <b>Run workflow</b>를 누르세요. 몇 분 뒤 Vercel이 새 버전으로 바꿉니다.</span></div>';
+      },
+      help: ["GitHub 편집 칸이 비어 있으면 설치 안내 5-3 ‘직접 넣기’를 따라 하세요.", "GitHub에서 404가 나오면 GitHub에 그 저장소 주인 계정으로 로그인했는지 확인하세요."] }
+  ];
+
+  function stepDone(i) { return !!state.done[STEPS[i].key]; }
+  function allDone() { return STEPS.every(function (_, i) { return stepDone(i); }); }
+
+  // 3×3 판: 1 2 3 / 4 ★ 5 / 6 7 8 (가운데 = 내 앱 완성)
+  var ORDER = [0, 1, 2, 3, -1, 4, 5, 6, 7];
+  function renderBoard() {
+    var b = document.getElementById("board");
+    b.innerHTML = ORDER.map(function (i) {
+      if (i === -1) {
+        return '<button type="button" class="cell goal' + (allDone() ? " complete" : "") + (state.step === 8 ? " current" : "") + '" data-go="8" role="listitem" aria-label="내 앱 완성 보기">' + (allDone() ? "내 앱 완성 ✓" : "내 앱 완성") + "</button>";
+      }
+      var s = STEPS[i];
+      return '<button type="button" class="cell' + (stepDone(i) ? " done" : "") + (state.step === i ? " current" : "") + '" data-go="' + i + '" role="listitem" aria-label="' + (i + 1) + "단계 " + esc(s.short) + (stepDone(i) ? " 완료" : "") + '"><span class="n">' + (i + 1) + "</span>" + esc(s.short) + "</button>";
+    }).join("");
+    var n = STEPS.filter(function (_, i) { return stepDone(i); }).length;
+    document.getElementById("meter").textContent = n + " / 8 단계 완료";
+    var rows = [];
+    rows.push("<div><b>GitHub 아이디</b> <span class=\"v\">" + (state.github ? esc(state.github) : "아직 없음") + "</span></div>");
+    rows.push("<div><b>앱 주소</b> <span class=\"v\">" + (state.app ? esc(state.app) : "아직 없음") + "</span></div>");
+    rows.push("<div><b>설정 코드</b> <span class=\"v\">" + (state.code ? "만들어 둠 (4단계에서 보기)" : "아직 없음") + "</span></div>");
+    document.getElementById("savedBox").innerHTML = rows.join("");
+  }
+
+  function renderStep() {
+    var host = document.getElementById("stepHost");
+    if (state.step === 8) { host.innerHTML = renderSummary(); bind(); return; }
+    var i = state.step, s = STEPS[i];
+    host.innerHTML = '<section class="step" aria-labelledby="st-title">' +
+      '<div class="step-head"><span class="eyebrow">' + (i + 1) + " / 8 단계 · " + s.time + "</span>" +
+      '<h2 id="st-title">' + s.title + "</h2><p class=\"lead\">" + s.lead + "</p></div>" +
+      s.body() +
+      (s.help && s.help.length ? '<details class="help"><summary>막혔을 때</summary><ul>' + s.help.map(function (h) { return "<li>" + h + "</li>"; }).join("") + "</ul></details>" : "") +
+      '<div class="toast" id="toast" role="status"></div>' +
+      '<div class="nav"><button type="button" class="btn ghost" data-go="' + Math.max(0, i - 1) + '"' + (i === 0 ? " hidden" : "") + '>← 이전 단계</button>' +
+      '<div class="right">' + (stepDone(i) ? '<span class="done-badge">✓ 마친 단계</span>' : "") +
+      '<button type="button" class="btn big" id="finish">' + (i === 7 ? "마쳤어요, 완성 보기" : "이 단계를 마쳤어요 →") + "</button></div></div>" +
+      "</section>";
+    bind();
+  }
+
+  function renderSummary() {
+    var base = appBase(), r = repoUrl();
+    var lines = [
+      ["학생 접속 주소", base ? base : "6단계에서 적어 주세요"],
+      ["교사 로그인", base ? base + "/teacher/login" : "6단계에서 적어 주세요"],
+      ["내 GitHub 저장소", r || "1단계에서 아이디를 적어 주세요"],
+      ["앱 업데이트 받기", r ? r + "/actions" : "1단계에서 아이디를 적어 주세요"],
+      ["Vercel 대시보드", "https://vercel.com/dashboard"],
+      ["OpenRouter 잔액", "https://openrouter.ai/settings/credits"]
+    ];
+    var memo = lines.map(function (l) { return l[0] + ": " + l[1]; }).join("\n");
+    var n = STEPS.filter(function (_, i) { return stepDone(i); }).length;
+    return '<section class="step" aria-labelledby="st-title">' +
+      '<div class="step-head"><span class="eyebrow">' + (allDone() ? "완성" : n + " / 8 단계 완료") + "</span>" +
+      '<h2 id="st-title">' + (allDone() ? "내 앱이 완성됐습니다" : "아직 남은 단계가 있어요") + "</h2>" +
+      '<p class="lead">' + (allDone() ? "아래 주소들을 즐겨찾기에 넣거나, <b>모두 복사</b>를 눌러 메모장에 붙여 두세요. 실제 학급을 만들고 <b>안내 카드 인쇄</b>로 학생 카드를 나눠 주면 수업을 시작할 수 있습니다." : "만다라트 판에서 비어 있는 칸을 눌러 이어서 하세요.") + "</p></div>" +
+      '<div class="table-wrap"><table class="summary"><tbody>' + lines.map(function (l) { return "<tr><th>" + esc(l[0]) + "</th><td>" + esc(l[1]) + "</td></tr>"; }).join("") + "</tbody></table></div>" +
+      '<div class="row">' + copyBtn(memo, "모두 복사", "copy-all") + link(base ? base + "/teacher/login" : "", "교사 화면 열기", { need: "6단계에서 앱 주소를 먼저 적어 주세요" }) + link(GUIDE_URL, "자세한 설치 안내 보기", { ghost: true }) + "</div>" +
+      '<div class="note tip"><span>설정 코드와 OpenRouter 키는 위 목록에 넣지 않았습니다. 메모장이나 비밀번호 관리자에 따로 보관하세요.</span></div>' +
+      '<div class="toast" id="toast" role="status"></div>' +
+      '<details class="help"><summary>이 컴퓨터에서 지우기</summary><ul><li>이 페이지가 이 브라우저에 저장한 아이디, 앱 주소, 설정 코드, 체크 표시를 모두 지웁니다. 내 앱과 계정에는 영향이 없습니다.</li></ul>' +
+      '<div class="row" style="margin-top:10px"><button type="button" class="btn ghost" id="wipe-ask">지우기</button><span id="wipe-confirm" hidden><span>정말 지울까요?</span> <button type="button" class="btn" id="wipe-yes">네, 지웁니다</button> <button type="button" class="btn ghost" id="wipe-no">아니요</button></span></div></details>' +
+      '<div class="nav"><button type="button" class="btn ghost" data-go="7">← 8단계로</button></div>' +
+      "</section>";
+  }
+
+  function toast(t) { var el = document.getElementById("toast"); if (el) { el.textContent = t; setTimeout(function () { if (el.textContent === t) el.textContent = ""; }, 2600); } }
+  function copy(text, btn) {
+    function fallback() {
+      var ta = document.createElement("textarea"); ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(ta);
+      toast(ok ? "복사했습니다." : "자동 복사가 안 됩니다. 글자를 길게 눌러 직접 복사해 주세요.");
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { toast("복사했습니다. 붙여 넣을 곳에 Ctrl+V(휴대폰은 길게 눌러 붙여넣기) 하세요."); }, fallback);
+      } else fallback();
+    } catch (e) { fallback(); }
+  }
+  function genCode() {
+    var A = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789", out = "";
+    var buf = new Uint32Array(24); crypto.getRandomValues(buf);
+    for (var i = 0; i < 24; i++) out += A[buf[i] % A.length];
+    return out;
+  }
+  function cleanApp(v) {
+    v = (v || "").trim(); if (!v) return { ok: true, value: "" };
+    if (!/^https?:\/\//i.test(v)) v = "https://" + v;
+    try { var u = new URL(v); if (!u.hostname || u.hostname.indexOf(".") < 0) return { ok: false }; return { ok: true, value: "https://" + u.host }; } catch (e) { return { ok: false }; }
+  }
+
+  function bind() {
+    document.querySelectorAll("[data-go]").forEach(function (el) { el.onclick = function () { state.step = Number(el.getAttribute("data-go")); save(); render(); window.scrollTo({ top: 0, behavior: "smooth" }); }; });
+    document.querySelectorAll("[data-copy]").forEach(function (el) { el.onclick = function () { copy(el.getAttribute("data-copy"), el); }; });
+    document.querySelectorAll("[data-check]").forEach(function (el) { el.onchange = function () { state.checks[el.getAttribute("data-check")] = el.checked; save(); }; });
+    var f = document.getElementById("finish");
+    if (f) f.onclick = function () { state.done[STEPS[state.step].key] = true; state.step = Math.min(8, state.step + 1); save(); render(); window.scrollTo({ top: 0, behavior: "smooth" }); };
+    var g = document.getElementById("in-github");
+    if (g) g.oninput = function () {
+      var v = g.value.trim().replace(/^@/, "").replace(/^https?:\/\/github\.com\//i, "").replace(/\/.*$/, "");
+      var ok = !v || /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(v);
+      document.getElementById("err-github").textContent = ok ? "" : "영문, 숫자, 하이픈(-)만 들어갑니다.";
+      if (ok) { state.github = v; save(); renderBoard(); }
+    };
+    var rp = document.getElementById("in-repo");
+    if (rp) rp.oninput = function () { var v = rp.value.trim(); if (/^[A-Za-z0-9._-]{1,100}$/.test(v)) { state.repo = v; save(); } };
+    var a = document.getElementById("in-app");
+    if (a) a.onchange = a.onblur = function () {
+      var r = cleanApp(a.value);
+      document.getElementById("err-app").textContent = r.ok ? "" : "주소 모양이 아닙니다. 예: https://mandalart-abcd.vercel.app";
+      if (r.ok) { state.app = r.value; a.value = r.value; save(); render(); }
+    };
+    var gc = document.getElementById("gen-code");
+    if (gc) gc.onclick = function () { state.code = genCode(); save(); render(); toast("설정 코드를 만들었습니다. 복사해서 메모해 두세요."); };
+    var wa = document.getElementById("wipe-ask"), wc = document.getElementById("wipe-confirm");
+    if (wa) wa.onclick = function () { wc.hidden = false; wa.hidden = true; };
+    var wn = document.getElementById("wipe-no"); if (wn) wn.onclick = function () { wc.hidden = true; wa.hidden = false; };
+    var wy = document.getElementById("wipe-yes");
+    if (wy) wy.onclick = function () { try { localStorage.removeItem(KEY); } catch (e) {} state = { step: 0, github: "", repo: "mandalart", app: "", code: "", done: {}, checks: {} }; render(); };
+  }
+
+  function render() { renderBoard(); renderStep(); }
+  if (typeof state.step !== "number" || state.step < 0 || state.step > 8) state.step = 0;
+  render();
+})();
+</script>
+
+</body>
+</html>
