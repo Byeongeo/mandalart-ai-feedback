@@ -6,6 +6,7 @@ import { aiStatus } from "./feedback/client";
 import type { StudentRow } from "./auth";
 import { CONCERN_KIND_KEYS, type Category, type ConcernKind, type RejectReason } from "./feedback/categories";
 import { ruleConcernsByKind, type RuleConcern } from "./concern-rules";
+import type { SchoolLevel } from "./school-level";
 
 // 화면(서버 컴포넌트)과 API가 함께 쓰는 읽기 함수 모음. 화면은 sql을 직접 쓰지 말고 이 함수들을 쓰세요.
 
@@ -61,6 +62,8 @@ export type ClassListItem = {
   max_feedback_rounds: number;
   /** 학생 PIN 사용(false면 학급 코드·번호·이름만으로 들어옴) */
   require_pin: boolean;
+  /** 학교급(AI 진단 기준과 카드 질문 수준) */
+  school_level: SchoolLevel;
   created_at: Date;
   n_students: number;
   n_submitted: number;
@@ -74,7 +77,7 @@ export type ClassListItem = {
 
 export async function listClasses(teacherId: string): Promise<ClassListItem[]> {
   return sql<ClassListItem[]>`
-    select c.id, c.name, c.class_code, c.is_open, c.max_feedback_rounds, c.require_pin, c.created_at,
+    select c.id, c.name, c.class_code, c.is_open, c.max_feedback_rounds, c.require_pin, c.school_level, c.created_at,
       (select count(*)::int from students s where s.class_id = c.id) as n_students,
       (select count(*)::int from students s join mandalarts m on m.student_id = s.id
          where s.class_id = c.id and m.status = 'submitted') as n_submitted,
@@ -107,6 +110,8 @@ export type ClassInfo = {
   id: string; name: string; class_code: string; is_open: boolean; max_feedback_rounds: number;
   /** 학생 PIN 사용(false면 학급 코드·번호·이름만으로 들어옴. 학생 PIN은 지우지 않고 그대로 둠) */
   require_pin: boolean;
+  /** 학교급(AI 진단 기준과 카드 질문 수준). 바꾸면 그다음 피드백부터 적용 */
+  school_level: SchoolLevel;
   created_at: Date;
 };
 
@@ -176,7 +181,7 @@ export type ClassOverview = {
 /** 학급 화면 전체 자료. 교사의 학급이 아니면 null. */
 export async function classOverview(teacherId: string, classId: string): Promise<ClassOverview | null> {
   const [cls] = await sql<ClassInfo[]>`
-    select id, name, class_code, is_open, max_feedback_rounds, require_pin, created_at
+    select id, name, class_code, is_open, max_feedback_rounds, require_pin, school_level, created_at
     from classes where id = ${classId} and teacher_id = ${teacherId}`;
   if (!cls) return null;
 

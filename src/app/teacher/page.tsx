@@ -36,6 +36,9 @@ export default async function TeacherHome() {
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${c.is_open ? "bg-emerald-100 text-emerald-800" : "bg-stone-200 text-stone-600"}`}>
                     {c.is_open ? "열림" : "닫힘"}
                   </span>
+                  {c.school_level === "high" && (
+                    <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-800">고등학교</span>
+                  )}
                   {!c.require_pin && (
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900"
                       title="학생 PIN을 쓰지 않는 학급입니다. 학급 코드·번호·이름만으로 들어오므로, 시범 수업이 끝나면 학급 화면에서 PIN을 다시 켜세요.">

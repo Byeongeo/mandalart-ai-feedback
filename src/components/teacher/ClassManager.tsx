@@ -8,6 +8,7 @@ import type { ClassOverview, StudentProgress } from "@/lib/queries";
 import { fmtKst, type Jsonify } from "../format";
 import RosterInput from "./RosterInput";
 import ExportButtons from "./ExportButtons";
+import { SCHOOL_LEVELS, SCHOOL_LEVEL_KEYS, type SchoolLevel } from "@/lib/school-level";
 import { AI_SOURCE_NOTE, RULE_GONE_TEXT, RULE_NOW_TEXT, RULE_SOURCE_NOTE, SafetyHint, concernLabel, ruleKindsText } from "./concern";
 
 type Overview = Jsonify<ClassOverview>;
@@ -63,13 +64,15 @@ export default function ClassManager({ overview }: { overview: Overview }) {
   // 안전 신호(누가, 어떤 종류)도 기본으로 숨깁니다. 수업 시작 때 학급 코드를 보여 주려고 화면을 띄워도 친구들이 보지 못하게.
   // PIN처럼 저장하지 않으므로 페이지를 다시 열면 다시 숨겨집니다(30초 자동 새로 고침에는 그대로).
   const [showSafety, setShowSafety] = useState(false);
-  // 설정(단계별 피드백 횟수, '학생 PIN 사용')을 바꾸는 동안 고른 값(value)을 먼저 보여 줍니다. 요청이 끝나고 새로 고친 서버 자료가
+  // 설정(단계별 피드백 횟수, '학생 PIN 사용', 학교급)을 바꾸는 동안 고른 값(value)을 먼저 보여 줍니다. 요청이 끝나고 새로 고친 서버 자료가
   // 들어오면 버리고, 그 전에라도 서버 값이 바뀌면(from과 다름) 버립니다. 그 뒤로는 늘 서버 값을 따르므로, 다른 기기에서 다시 바꾼 값도
   // '새로 고침'이나 30초 자동 새로 고침으로 그대로 보입니다(먼저 보여 준 값이 남아 서버 값을 가리지 않게).
   const [pendingRounds, setPendingRounds] = useState<{ value: number; from: number } | null>(null);
   const [pendingPin, setPendingPin] = useState<{ value: boolean; from: boolean } | null>(null);
+  const [pendingLevel, setPendingLevel] = useState<{ value: SchoolLevel; from: SchoolLevel } | null>(null);
   if (pendingRounds && pendingRounds.from !== cls.max_feedback_rounds) setPendingRounds(null);
   if (pendingPin && pendingPin.from !== cls.require_pin) setPendingPin(null);
+  if (pendingLevel && pendingLevel.from !== cls.school_level) setPendingLevel(null);
   const [deleteCode, setDeleteCode] = useState("");
 
   // 학급이 열려 있는 동안 진행 상황을 30초마다 새로 고칩니다(화면을 보고 있을 때만).
@@ -134,6 +137,15 @@ export default function ClassManager({ overview }: { overview: Overview }) {
     setPendingRounds({ value: n, from: cls.max_feedback_rounds });
     const ok = await call(classUrl, "PATCH", { maxFeedbackRounds: n }, () => "저장했습니다.", () => setPendingRounds(null));
     if (!ok) setPendingRounds(null);
+  }
+
+  // 학교급: AI 진단 기준과 카드 질문 수준만 바뀝니다. 피드백을 요청할 때 서버가 읽으므로 그다음 피드백부터 적용되고,
+  // 학생은 로그아웃되지 않으며 이미 받은 카드는 그대로입니다. 그래서 확인 창 없이 바로 바꿉니다.
+  async function setSchoolLevel(level: SchoolLevel) {
+    setPendingLevel({ value: level, from: cls.school_level });
+    const ok = await call(classUrl, "PATCH", { schoolLevel: level },
+      () => `학교급을 ${SCHOOL_LEVELS[level]}로 바꿨습니다. 그다음에 받는 AI 피드백부터 적용됩니다.`, () => setPendingLevel(null));
+    if (!ok) setPendingLevel(null);
   }
 
   // 학생 PIN 켜기·끄기. 학생 세션 지문에 이 설정이 들어 있어서, 바꾸면 이 학급 학생은 모두 다시 로그인해야 합니다(src/lib/pin.ts).
@@ -272,6 +284,7 @@ export default function ClassManager({ overview }: { overview: Overview }) {
   const started = students.filter((s) => s.status !== null).length;
   const submitted = students.filter((s) => s.status === "submitted").length;
   const maxRounds = pendingRounds && pendingRounds.from === cls.max_feedback_rounds ? pendingRounds.value : cls.max_feedback_rounds;
+  const schoolLevel = pendingLevel && pendingLevel.from === cls.school_level ? pendingLevel.value : cls.school_level;
   const byId = new Map(students.map((s) => [s.id, s]));
   // PIN을 끈 학급은 잠금을 쓰지 않으므로(학생 로그인이 잠금을 보지 않음) 잠김 표시·풀기 버튼도 보이지 않습니다.
   const lockedIds = requirePin ? students.filter((s) => s.locked).map((s) => s.id) : [];
@@ -302,6 +315,7 @@ export default function ClassManager({ overview }: { overview: Overview }) {
             <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls.is_open ? "bg-emerald-100 text-emerald-800" : "bg-stone-200 text-stone-600"}`}>
               {cls.is_open ? "열림" : "닫힘"}
             </span>
+            <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-800">{SCHOOL_LEVELS[schoolLevel]}</span>
             <button onClick={renameClass} disabled={busy} className="text-xs font-normal text-stone-500 underline disabled:opacity-40">이름 고치기</button>
           </h1>
           <p className="text-sm text-stone-600">
@@ -378,6 +392,18 @@ export default function ClassManager({ overview }: { overview: Overview }) {
             <option value={1}>1회 (첫 피드백만)</option>
           </select>
         </label>
+        <div className="flex flex-col gap-0.5">
+          <label className="flex flex-wrap items-center gap-2 text-sm">
+            학교급
+            <select value={schoolLevel} disabled={busy} onChange={(e) => void setSchoolLevel(e.target.value as SchoolLevel)}
+              aria-describedby="level-setting-hint" className="rounded border border-stone-300 bg-white px-2 py-1">
+              {SCHOOL_LEVEL_KEYS.map((k) => <option key={k} value={k}>{SCHOOL_LEVELS[k]}</option>)}
+            </select>
+          </label>
+          <p id="level-setting-hint" className="text-xs text-stone-500">
+            AI 피드백의 진단 기준과 카드 질문 수준이 바뀝니다. 바꾸면 그다음에 새로 받는 피드백부터 적용됩니다(이미 받은 카드와 그 단계의 확인 피드백은 바꾸기 전 기준).
+          </p>
+        </div>
         <ExportButtons classId={cls.id} />
       </section>
 

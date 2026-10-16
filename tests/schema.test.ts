@@ -7,6 +7,7 @@ import {
   pendingMigrations,
 } from "../src/lib/migrations.ts";
 import { CONCERN_KIND_KEYS } from "../src/lib/feedback/categories.ts";
+import { DEFAULT_SCHOOL_LEVEL, SCHOOL_LEVEL_KEYS } from "../src/lib/school-level.ts";
 
 const fileSql = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8");
 
@@ -127,6 +128,7 @@ test("이후 마이그레이션은 지우는 문장(drop table·truncate·delete
 const SHIPPED_HASHES: Record<string, string> = {
   "0001_base": "af0dafa37322d4bb",
   "0002_class_require_pin": "85f8cf3a64e04c4b",
+  "0003_class_school_level": "41c95560a5c8a12a",
 };
 
 test("배포한 마이그레이션(기본 스키마 포함)의 SQL은 바뀌지 않았다(주석만 고치는 것은 괜찮음)", () => {
@@ -164,4 +166,24 @@ test("0002: 학급마다 '학생 PIN 사용' 열을 더하고, 이미 있는 학
   assert.ok(!/^\s*require_pin\b/m.test(fileSql));
   // 기본 스키마만 적용된 설치(이 설정이 생기기 전 버전)에서는 다음에 적용할 첫 마이그레이션입니다.
   assert.equal(pendingMigrations(MIGRATIONS, [BASE_MIGRATION_ID])[0]?.id, "0002_class_require_pin");
+});
+
+test("0003: 학급마다 학교급 열을 더하고(중학교·고등학교만), 이미 있는 학급은 중학교로 둔다", () => {
+  const m = LATER_MIGRATIONS.find((x) => x.id === "0003_class_school_level");
+  assert.ok(m);
+  assert.equal(
+    meaningfulSql(m.sql),
+    "alter table classes add column if not exists school_level text not null default 'middle' check (school_level in ('middle', 'high'));",
+  );
+  // DB가 받는 값은 화면·API의 학교급 목록(school-level.ts)과 같아야 합니다.
+  const allowed = [...meaningfulSql(m.sql).matchAll(/'(\w+)'/g)].map((x) => x[1]).slice(1);
+  assert.deepEqual(allowed, [...SCHOOL_LEVEL_KEYS]);
+  assert.equal(DEFAULT_SCHOOL_LEVEL, "middle");
+  assert.ok(meaningfulSql(m.sql).includes(`default '${DEFAULT_SCHOOL_LEVEL}'`));
+  // 기본 스키마에는 없어야 합니다(0001_base의 뜻은 바꾸지 않음).
+  assert.ok(!/^\s*school_level\b/m.test(fileSql));
+  // 0002까지 적용된 설치(지금 교사 설치)에서는 다음에 적용할 마이그레이션이 이것 하나뿐입니다.
+  assert.deepEqual(pendingMigrations(MIGRATIONS, [BASE_MIGRATION_ID, "0002_class_require_pin"]).map((x) => x.id), ["0003_class_school_level"]);
+  // 기본 스키마만 적용된 설치에서는 0002 다음에 적용합니다.
+  assert.deepEqual(pendingMigrations(MIGRATIONS, [BASE_MIGRATION_ID]).map((x) => x.id), ["0002_class_require_pin", "0003_class_school_level"]);
 });

@@ -6,6 +6,8 @@ import {
 } from "../src/lib/mandalart.ts";
 import { AI_ERROR_MESSAGES, noMatchingProviderMessage } from "../src/lib/feedback/ai-errors.ts";
 import { CARDS_PER_STAGE } from "../src/lib/feedback/categories.ts";
+import { SCHOOL_LEVEL_KEYS, roundSchoolLevel } from "../src/lib/school-level.ts";
+import { createHash } from "node:crypto";
 
 // 서버 전용 모듈(import "server-only", 확장자 없는 상대 경로)을 테스트에서 불러오기 위한 설정
 type Resolved = { url: string; shortCircuit?: boolean };
@@ -22,8 +24,8 @@ type Resolved = { url: string; shortCircuit?: boolean };
 delete process.env.FEEDBACK_MOCK;
 process.env.OPENROUTER_API_KEY = "test-key";
 process.env.OPENROUTER_BASE_URL = "http://openrouter.test/api/v1";
-const { ruleDiagnose, aiDiagnose } = await import("../src/lib/feedback/diagnose.ts");
-const { selectItems } = await import("../src/lib/feedback/cards.ts");
+const { ruleDiagnose, aiDiagnose, diagnosisSystem } = await import("../src/lib/feedback/diagnose.ts");
+const { selectItems, aiCards, cardSystem } = await import("../src/lib/feedback/cards.ts");
 const { checkAi, DEFAULT_MODEL } = await import("../src/lib/feedback/client.ts");
 
 test("칸 비교: 띄어쓰기만 바꾼 것은 고친 것이 아님", () => {
@@ -258,7 +260,7 @@ test("AI 연결 확인: 피드백과 같은 모델·제공사 조건·추론 설
     calls = [];
     const c = emptyContent();
     c.goal = "학생 글";
-    await aiDiagnose(c, { kind: "core" });
+    await aiDiagnose(c, { kind: "core" }, "middle");
     const [real] = chatCalls();
     for (const k of ["model", "provider", "reasoning"]) assert.deepEqual(probe.body?.[k], real.body?.[k], k);
     assert.equal(probe.body?.model, DEFAULT_MODEL);
@@ -356,4 +358,125 @@ test("맞는 제공사 없음 설명: 보관 조건 / 응답 형식 / 제공사 
   const format = noMatchingProviderMessage(m, "OpenRouter 404: No endpoints found that can handle the requested parameters.", false);
   assert.match(format, /JSON 응답 형식/);
   assert.match(noMatchingProviderMessage(m, "", true), /OPENROUTER_PROVIDERS를 비우거나/);
+});
+
+// ── 학교급(학급 설정)에 따른 AI 프롬프트 ─────────────────────────────
+const sha256 = (t: string) => createHash("sha256").update(t).digest("hex");
+// 학교급 설정이 생기기 전(fda0cb4)의 진단·카드 시스템 프롬프트 해시. 중학교 학급은 이 글을 그대로 받아야 합니다.
+const MIDDLE_DIAGNOSIS_SHA256 = "ff6552558fa23d80306e307dc7e6abac4809feda04306fb845886a888636ddcc";
+const MIDDLE_CARD_SHA256 = "a2c706eef7a96f8c1429dc51d30c216060616aeb5bbab074d9cba0eb221670bd";
+
+test("학교급 프롬프트: 중학교는 학교급 설정 전과 글자 하나까지 같음", () => {
+  assert.equal(sha256(diagnosisSystem("middle")), MIDDLE_DIAGNOSIS_SHA256);
+  assert.equal(sha256(cardSystem("middle")), MIDDLE_CARD_SHA256);
+  assert.ok(diagnosisSystem("middle").includes("- 중학생 수준을 고려해 지나치게 엄격하게 판단하지 마세요. 문제가 없으면 items를 빈 배열로 둡니다."));
+  assert.ok(cardSystem("middle").includes("- 두 문장 이내, 공백 포함 60~110자. 중학생이 한눈에 읽을 수 있게 짧게 쓰세요."));
+  for (const t of [diagnosisSystem("middle"), cardSystem("middle")]) assert.ok(!t.includes("고등학생"));
+});
+
+// 두 학교급의 프롬프트를 줄마다 비교해, 다른 줄만 [중학교, 고등학교]로 돌려줍니다(줄 수는 같아야 함).
+function lineDiff(a: string, b: string): [string, string][] {
+  const la = a.split("\n"), lb = b.split("\n");
+  assert.equal(la.length, lb.length);
+  return la.flatMap((l, i) => (l === lb[i] ? [] : [[l, lb[i]] as [string, string]]));
+}
+
+test("학교급 프롬프트: 고등학교 진단은 대상·판단 기준 세 가지·엄격함만 다르고, 안전 신호 부분은 같음", () => {
+  const mid = diagnosisSystem("middle"), high = diagnosisSystem("high");
+  assert.deepEqual(lineDiff(mid, high), [
+    ["당신은 중학생의 만다라트(목표 설정 도구)를 진단하는 교육 평가 보조자입니다.", "당신은 고등학생의 만다라트(목표 설정 도구)를 진단하는 교육 평가 보조자입니다."],
+    [
+      "- GOAL_VAGUE: 중심 목표에 기간·수준·대상 중 어느 것도 드러나지 않아 이뤘는지 판단할 수 없을 때. target_kind는 goal.",
+      "- GOAL_VAGUE: 중심 목표에 기한(언제까지)과 이뤘는지 잴 수 있는 기준(점수·등급·횟수 등) 중 하나라도 빠졌을 때. target_kind는 goal.",
+    ],
+    [
+      "- SUB_MISALIGNED: 세부 목표가 중심 목표 달성에 기여한다고 보기 어려울 때. target_kind는 sub.",
+      "- SUB_MISALIGNED: 세부 목표가 중심 목표 달성에 어떻게 기여하는지 설명하기 어려울 때(중심 목표가 진로·학업에 관한 것이면 그 맥락에서 이어지는지도 봅니다. 건강·관계·마음 관리처럼 중심 목표를 받쳐 주는 영역은 기여하는 것으로 봅니다). target_kind는 sub.",
+    ],
+    [
+      "- ACTION_NOT_MEASURABLE: 행동은 맞지만 했는지 확인할 기준(횟수·시간·요일 등)이 전혀 없어 점검이 어려울 때. 짧고 분명한 행동(예: '물 마시기 하루 8잔')은 해당하지 않습니다.",
+      "- ACTION_NOT_MEASURABLE: 행동은 맞지만 횟수·시간·점검 방법 중 어느 것도 드러나지 않아 했는지 점검하기 어려울 때('자주', '꾸준히'처럼 막연한 말만 있으면 드러나지 않은 것으로 봅니다). 짧고 분명한 행동(예: '물 마시기 하루 8잔')은 해당하지 않습니다.",
+    ],
+    [
+      "- 중학생 수준을 고려해 지나치게 엄격하게 판단하지 마세요. 문제가 없으면 items를 빈 배열로 둡니다.",
+      "- 고등학생 수준에 맞게 위 기준을 분명히 적용하되, 맞춤법·띄어쓰기·말투 같은 사소한 표현은 지적하지 마세요. 문제가 없으면 items를 빈 배열로 둡니다.",
+    ],
+  ]);
+  // 안전 신호(concern) 부분은 두 학교급이 똑같습니다.
+  const concern = (t: string) => t.slice(t.indexOf("안전 신호(concern)"));
+  assert.ok(concern(mid).length > 500);
+  assert.equal(concern(high), concern(mid));
+  assert.ok(!high.includes("중학생"));
+  // 받쳐 주는 영역(건강·관계 등)은 연결된 것으로 보아 UNBALANCED(공부만 몰림)와 부딪히지 않고, 진로·학업은 그런 중심 목표일 때만 봅니다.
+  assert.ok(high.includes("- UNBALANCED: 세부 목표 대부분이 한 영역(예: 공부 과목만)에 몰려 있을 때."));
+  assert.ok(!high.includes("진로·학업 맥락에서 중심 목표와 논리적으로"));
+  // 측정 기준은 셋 중 하나라도 있으면 됩니다(셋 모두를 요구하지 않음).
+  assert.ok(high.includes("횟수·시간·점검 방법 중 어느 것도 드러나지 않아"));
+});
+
+test("학교급 프롬프트: 고등학교 카드는 대상·질문 깊이만 다르고, 길이·답 대신 쓰지 않기·칭찬 빼기·종류별 방식은 같음", () => {
+  const mid = cardSystem("middle"), high = cardSystem("high");
+  assert.deepEqual(lineDiff(mid, high), [
+    ["당신은 중학생이 만다라트(목표 설정 도구)를 스스로 고치도록 돕는 피드백 작성자입니다.", "당신은 고등학생이 만다라트(목표 설정 도구)를 스스로 고치도록 돕는 피드백 작성자입니다."],
+    [
+      "- 학생이 실제로 쓴 표현을 짚어서, 그 학생의 목표에 맞는 질문이나 방향을 제시하세요.",
+      "- 학생이 실제로 쓴 표현을 짚어서, 그 학생의 목표에 맞는 질문이나 방향을 제시하세요. 새 문제·아직 해결 안 됨 카드에서는 그 항목에 맞을 때 기한, 잴 수 있는 기준, 점검 방법처럼 한 걸음 더 깊이 생각하게 하는 질문을 하세요(해결됨 카드에는 넣지 마세요).",
+    ],
+    ["- 두 문장 이내, 공백 포함 60~110자. 중학생이 한눈에 읽을 수 있게 짧게 쓰세요.", "- 두 문장 이내, 공백 포함 60~110자. 고등학생이 한눈에 읽을 수 있게 짧게 쓰세요."],
+  ]);
+  for (const rule of ["- 힌트만 주고 답을 대신 써 주지 마세요.", "칭찬이나 인사말은 넣지 마세요.", "따뜻하고 차분한 말투를 지키세요", "- 해결됨:", "- 아직 해결 안 됨:"]) {
+    assert.ok(high.includes(rule), rule);
+  }
+  assert.ok(!high.includes("중학생"));
+  // 더 깊은 질문은 새 문제·아직 해결 안 됨 카드에만. 해결됨 카드는 두 학교급 모두 새 지적을 하지 않습니다.
+  assert.ok(high.includes("새 문제·아직 해결 안 됨 카드에서는 그 항목에 맞을 때"));
+  assert.ok(high.includes("(해결됨 카드에는 넣지 마세요)"));
+  assert.ok(high.includes("새로운 지적은 하지 마세요."));
+  assert.ok(!high.includes("진로·학업"));
+});
+
+test("학교급 프롬프트: AI 요청에는 학교급에 맞는 지시와 만다라트 글만 들어가고 학생 이름·번호·PIN·학급은 없음, 모델 조건은 같음", async () => {
+  // 학생 정보처럼 보이는 값(만다라트 글에는 넣지 않음). 진단·카드 함수는 이런 값을 받을 자리가 없습니다.
+  const student = { name: "홍길동", number: "37번", pin: "4821", className: "3학년 7반", classCode: "QWZ7KD" };
+  const c = filledContent();
+  c.goal = "1학기 기말고사 수학 80점 넘기";
+  setup((url, body) => {
+    if (url === `${BASE}/key`) return KEY_OK;
+    const name = ((body?.response_format as { json_schema?: { name?: string } }).json_schema ?? {}).name;
+    return okChat(name === "feedback_cards" ? '{"cards":[{"index":0,"body":"언제까지 무엇으로 확인할지 정하면 더 분명해질까요?"}]}' : '{"items":[],"concern":{"flag":false,"kind":null}}');
+  });
+  const plan = { item: { category: "GOAL_VAGUE" as const, target: { kind: "goal" as const }, evidence: "기한 없음" }, kind: "issue" as const };
+  const sent: Record<string, Call["body"][]> = {};
+  for (const level of SCHOOL_LEVEL_KEYS) {
+    calls = [];
+    await aiDiagnose(c, { kind: "core" }, level);
+    await aiCards(c, [plan], level);
+    const [diag, card] = chatCalls();
+    sent[level] = [diag.body, card.body];
+    const messages = (b: Call["body"]) => b?.messages as { role: string; content: string }[];
+    assert.equal(messages(diag.body)[0].content, diagnosisSystem(level));
+    assert.equal(messages(card.body)[0].content, cardSystem(level));
+    const all = JSON.stringify([messages(diag.body), messages(card.body)]);
+    for (const v of Object.values(student)) assert.ok(!all.includes(v), v);
+    assert.ok(all.includes("1학기 기말고사 수학 80점 넘기"));
+  }
+  // 학교급과 상관없이 모델·제공사 조건·추론 설정·응답 형식·토큰 한도와 사용자 메시지(만다라트 글)는 같습니다.
+  for (const i of [0, 1]) {
+    const { messages: mm, ...restMid } = sent.middle[i] ?? {};
+    const { messages: mh, ...restHigh } = sent.high[i] ?? {};
+    assert.deepEqual(restHigh, restMid);
+    assert.equal((mh as { content: string }[])[1].content, (mm as { content: string }[])[1].content);
+  }
+});
+
+test("학교급: 첫 피드백은 학급 설정, 확인 피드백은 그 단계 첫 피드백에 기록된 학교급(기록 없으면 중학교)", () => {
+  // 첫 피드백(2회차가 아님): 지금 학급 설정
+  assert.equal(roundSchoolLevel("high"), "high");
+  assert.equal(roundSchoolLevel("middle"), "middle");
+  // 확인 피드백: 단계 중간에 교사가 바꿔도 첫 피드백의 기준 그대로
+  assert.equal(roundSchoolLevel("high", { school_level: "middle" }), "middle");
+  assert.equal(roundSchoolLevel("middle", { school_level: "high" }), "high");
+  // 학교급 설정 전 회차(기록 없음)는 중학교 프롬프트로 만든 것이므로 중학교
+  assert.equal(roundSchoolLevel("high", { school_level: null }), "middle");
+  assert.equal(roundSchoolLevel("high", { school_level: undefined }), "middle");
 });

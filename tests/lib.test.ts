@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Roster, parseRoster, readRenames, renameWarning, rosterDiff, rosterRenames } from "../src/lib/roster.ts";
-import { emptyContent, inStage, stageNotReady } from "../src/lib/mandalart.ts";
+import { emptyContent, inStage, stageNotReady, zeroCardMessage } from "../src/lib/mandalart.ts";
 
 test("명렬표: 엑셀 붙여넣기(탭)와 머리글, 세 번째 열부터는 무시", () => {
   const r = parseRoster("번호\t이름\t비고\n1\t김민준\t동의\n2\t이서연\n3\t박 지호\tO");
@@ -91,4 +91,15 @@ test("단계 준비 조건", () => {
   assert.equal(inStage({ kind: "action", sub: 2, action: 0 }, { kind: "block", index: 2 }), true);
   assert.equal(inStage({ kind: "action", sub: 3, action: 0 }, { kind: "block", index: 2 }), false);
   assert.equal(inStage({ kind: "goal" }, { kind: "block", index: 2 }), false);
+});
+
+test("카드 없는 첫 피드백 문구: 쓰는 중에는 다음 할 일까지, 볼 수만 있을 때(제출 뒤·학급 닫힘)는 앞부분만", () => {
+  const head = "AI가 보기에 이 단계에는 고칠 점이 없어요. 잘 썼어요!";
+  assert.equal(zeroCardMessage("core", false), `${head} 한 번 더 읽어 보고 다음 단계로 넘어가세요.`);
+  assert.equal(zeroCardMessage("block", false), `${head} 한 번 더 읽어 보고 다음 단계로 넘어가세요.`);
+  assert.equal(zeroCardMessage("whole", false), `${head} 한 번 더 읽어 보고 제출해도 좋아요.`);
+  for (const stage of ["core", "block", "whole"] as const) {
+    assert.equal(zeroCardMessage(stage, true), head);
+    assert.doesNotMatch(zeroCardMessage(stage, true), /넘어가|제출/);
+  }
 });

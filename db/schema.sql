@@ -25,6 +25,7 @@ create table if not exists teachers (
 
 -- 학급. is_open이 false이면 학생은 로그인해서 볼 수만 있고 고치기·피드백·제출은 못 합니다.
 -- 학생 PIN 사용 열(require_pin boolean, 기본 true)은 이 파일이 아니라 마이그레이션 0002_class_require_pin이 더합니다(src/lib/migrations.ts).
+-- 학교급 열(school_level text, 'middle' = 중학교 | 'high' = 고등학교, 기본 'middle')도 이 파일이 아니라 마이그레이션 0003_class_school_level이 더합니다.
 create table if not exists classes (
   id uuid primary key default gen_random_uuid(),
   teacher_id uuid not null references teachers(id) on delete cascade,

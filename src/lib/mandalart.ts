@@ -111,6 +111,14 @@ export function stageNotReady(s: Stage, c: MandalartContent): string | null {
   return null;
 }
 
+// 카드가 한 장도 없는 첫 피드백에 카드 대신 보여 줄 문구. 쓰는 중에는 다음에 할 일까지 알려 주고,
+// 볼 수만 있을 때(제출한 뒤, 학급이 닫힘 등)는 넘어가거나 제출할 수 없으므로 앞부분만 보여 줍니다.
+export function zeroCardMessage(stage: Stage["kind"], readOnly: boolean): string {
+  const head = "AI가 보기에 이 단계에는 고칠 점이 없어요. 잘 썼어요!";
+  if (readOnly) return head;
+  return `${head} 한 번 더 읽어 보고 ${stage === "whole" ? "제출해도 좋아요." : "다음 단계로 넘어가세요."}`;
+}
+
 export function inStage(t: Target, s: Stage): boolean {
   if (s.kind === "core") return t.kind === "goal" || t.kind === "sub";
   if (s.kind === "block") return t.kind === "action" && t.sub === s.index;
