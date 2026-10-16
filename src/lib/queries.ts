@@ -59,6 +59,8 @@ export type ClassListItem = {
   class_code: string;
   is_open: boolean;
   max_feedback_rounds: number;
+  /** 학생 PIN 사용(false면 학급 코드·번호·이름만으로 들어옴) */
+  require_pin: boolean;
   created_at: Date;
   n_students: number;
   n_submitted: number;
@@ -72,7 +74,7 @@ export type ClassListItem = {
 
 export async function listClasses(teacherId: string): Promise<ClassListItem[]> {
   return sql<ClassListItem[]>`
-    select c.id, c.name, c.class_code, c.is_open, c.max_feedback_rounds, c.created_at,
+    select c.id, c.name, c.class_code, c.is_open, c.max_feedback_rounds, c.require_pin, c.created_at,
       (select count(*)::int from students s where s.class_id = c.id) as n_students,
       (select count(*)::int from students s join mandalarts m on m.student_id = s.id
          where s.class_id = c.id and m.status = 'submitted') as n_submitted,
@@ -101,7 +103,12 @@ function ruleConcernView(kind: ConcernKind | null, at: Date | null, content: unk
   return { kind, at, now, kind_now: now.some((g) => g.kind === kind), reviewed };
 }
 
-export type ClassInfo = { id: string; name: string; class_code: string; is_open: boolean; max_feedback_rounds: number; created_at: Date };
+export type ClassInfo = {
+  id: string; name: string; class_code: string; is_open: boolean; max_feedback_rounds: number;
+  /** 학생 PIN 사용(false면 학급 코드·번호·이름만으로 들어옴. 학생 PIN은 지우지 않고 그대로 둠) */
+  require_pin: boolean;
+  created_at: Date;
+};
 
 export type StudentProgress = {
   id: string;
@@ -109,7 +116,7 @@ export type StudentProgress = {
   name: string;
   /** 4자리 PIN(없으면 null). 교사 화면·안내 카드에만 보여 주세요. */
   pin: string | null;
-  /** 로그인을 여러 번 틀려 잠겨 있음 */
+  /** 로그인을 여러 번 틀려 잠겨 있음(학생 PIN을 끈 학급에서는 잠금을 쓰지 않으므로 화면에 보이지 않음) */
   locked: boolean;
   mandalart_id: string | null;
   /** null = 아직 들어오지 않음 */
@@ -169,7 +176,7 @@ export type ClassOverview = {
 /** 학급 화면 전체 자료. 교사의 학급이 아니면 null. */
 export async function classOverview(teacherId: string, classId: string): Promise<ClassOverview | null> {
   const [cls] = await sql<ClassInfo[]>`
-    select id, name, class_code, is_open, max_feedback_rounds, created_at
+    select id, name, class_code, is_open, max_feedback_rounds, require_pin, created_at
     from classes where id = ${classId} and teacher_id = ${teacherId}`;
   if (!cls) return null;
 
@@ -286,7 +293,7 @@ export type TeacherRoundView = {
 };
 
 export type StudentDetail = {
-  cls: { id: string; name: string; max_feedback_rounds: number };
+  cls: { id: string; name: string; max_feedback_rounds: number; require_pin: boolean };
   student: {
     id: string; number: number; name: string; pin: string | null; locked: boolean;
     /** 교사가 안전 신호를 '확인했어요'로 표시한 시각(없으면 null) */
@@ -306,10 +313,10 @@ export type StudentDetail = {
 export async function studentDetail(teacherId: string, classId: string, studentId: string): Promise<StudentDetail | null> {
   const [st] = await sql<{
     id: string; number: number; name: string; pin: string | null; locked: boolean; concern_reviewed_at: Date | null;
-    class_name: string; max_feedback_rounds: number;
+    class_name: string; max_feedback_rounds: number; require_pin: boolean;
   }[]>`
     select s.id, s.number, s.name, s.pin, (s.locked_until is not null and s.locked_until > now()) as locked, s.concern_reviewed_at,
-      c.name as class_name, c.max_feedback_rounds
+      c.name as class_name, c.max_feedback_rounds, c.require_pin
     from students s join classes c on c.id = s.class_id
     where s.id = ${studentId} and c.id = ${classId} and c.teacher_id = ${teacherId}`;
   if (!st) return null;
@@ -353,7 +360,7 @@ export async function studentDetail(teacherId: string, classId: string, studentI
     .filter((d): d is Date => d instanceof Date)
     .map((d) => d.getTime());
   return {
-    cls: { id: classId, name: st.class_name, max_feedback_rounds: st.max_feedback_rounds },
+    cls: { id: classId, name: st.class_name, max_feedback_rounds: st.max_feedback_rounds, require_pin: st.require_pin },
     student: { id: st.id, number: st.number, name: st.name, pin: st.pin, locked: st.locked, concern_reviewed_at: st.concern_reviewed_at },
     mandalart,
     rounds,

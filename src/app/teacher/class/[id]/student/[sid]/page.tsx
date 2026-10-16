@@ -42,7 +42,8 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
         <header className="flex flex-col gap-1">
           <h1 className="flex flex-wrap items-center gap-2 text-xl font-bold">
             {student.number}번 {student.name}
-            {student.locked && <span className="rounded bg-rose-100 px-1.5 text-xs font-medium text-rose-800">잠김</span>}
+            {/* 학생 PIN을 끈 학급은 잠금을 쓰지 않으므로 잠김 표시도 하지 않습니다. */}
+            {d.cls.require_pin && student.locked && <span className="rounded bg-rose-100 px-1.5 text-xs font-medium text-rose-800">잠김</span>}
           </h1>
           <p className="text-sm text-stone-600">
             {!mandalart

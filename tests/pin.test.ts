@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import {
   TEACHER_UNLOCK_MINUTES,
   fingerprintMatches,
   generatePin,
+  hasPinInput,
   isPin,
   isWeakPin,
   lockMinutes,
@@ -11,6 +13,7 @@ import {
   normalizePin,
   pinFingerprint,
   pinMatches,
+  studentLoginMatches,
 } from "../src/lib/pin.ts";
 
 test("PIN 만들기: 4자리 숫자 문자열이고 쉬운 PIN은 나오지 않음", () => {
@@ -79,6 +82,61 @@ test("세션 지문: 이름을 넣으면 이름이 바뀔 때 달라지고, 띄�
   assert.notEqual(a, pinFingerprint(secret, "8351", "김민준"));
   assert.notEqual(a, pinFingerprint(secret, "0472")); // 이름 없는 지문과도 다름
   assert.ok(!a.includes("0472"));
+});
+
+test("세션 지문: 학급의 '학생 PIN 사용'을 켜거나 끄면 달라진다(그 학급 학생은 모두 다시 로그인)", () => {
+  const secret = "s".repeat(32);
+  const on = pinFingerprint(secret, "0472", "김민준", true);
+  const off = pinFingerprint(secret, "0472", "김민준", false);
+  assert.match(off, /^[0-9a-f]{16}$/);
+  assert.notEqual(on, off); // 켬 → 끔, 끔 → 켬 모두 지문이 바뀜
+  assert.equal(pinFingerprint(secret, "0472", "김민준"), on); // 넣지 않으면 켬(기본)
+  // PIN을 끈 학급도 PIN·이름 부분은 그대로 지문에 들어감(PIN 다시 만들기·이름 고치기를 하면 로그아웃)
+  assert.notEqual(off, pinFingerprint(secret, "8351", "김민준", false));
+  assert.notEqual(off, pinFingerprint(secret, "0472", "이서연", false));
+  assert.equal(off, pinFingerprint(secret, "0472", "김 민준", false));
+  // PIN이 없는 학생도 끈 학급에서는 지문을 만들 수 있고, 켠 학급의 지문과 다름
+  assert.notEqual(pinFingerprint(secret, null, "김민준", false), pinFingerprint(secret, null, "김민준", true));
+  assert.ok(!off.includes("0472"));
+});
+
+test("세션 지문: PIN을 켠 학급은 이 설정이 생기기 전과 같은 지문(앱을 업데이트해도 로그아웃되지 않음)", () => {
+  const secret = "s".repeat(32);
+  const before = (pin: string, name: string) =>
+    createHmac("sha256", secret).update(`student-pin:${pin}|${name.replace(/\s+/g, "")}`).digest("hex").slice(0, 16);
+  assert.equal(pinFingerprint(secret, "0472", "김민준", true), before("0472", "김민준"));
+  assert.equal(pinFingerprint(secret, "0472", "김 민준", true), before("0472", "김민준"));
+  assert.notEqual(pinFingerprint(secret, "0472", "김민준", false), before("0472", "김민준"));
+});
+
+test("학생 로그인 확인: PIN을 켠 학급은 이름과 PIN이 모두 맞아야 함", () => {
+  const base = { requirePin: true, storedName: "김민준", storedPin: "0472" };
+  assert.equal(studentLoginMatches({ ...base, name: "김민준", pin: "0472" }), true);
+  assert.equal(studentLoginMatches({ ...base, name: "김 민준", pin: "04 72" }), true); // 띄어쓰기는 무시
+  assert.equal(studentLoginMatches({ ...base, name: "김민준", pin: "0473" }), false);
+  assert.equal(studentLoginMatches({ ...base, name: "김민준", pin: "" }), false); // 빈 PIN
+  assert.equal(studentLoginMatches({ ...base, name: "김민준", pin: undefined }), false);
+  assert.equal(studentLoginMatches({ ...base, name: "이서연", pin: "0472" }), false);
+  // PIN이 아직 없는 학생은 무엇을 넣어도 못 들어옴(선생님이 PIN을 만든 뒤에)
+  assert.equal(studentLoginMatches({ ...base, storedPin: null, name: "김민준", pin: "" }), false);
+  assert.equal(studentLoginMatches({ ...base, storedPin: null, name: "김민준", pin: "0472" }), false);
+});
+
+test("학생 로그인 확인: PIN을 끈 학급은 이름만 맞으면 되고 입력한 PIN은 보지 않음", () => {
+  const base = { requirePin: false, storedName: "김민준", storedPin: "0472" };
+  assert.equal(studentLoginMatches({ ...base, name: "김민준", pin: "" }), true);
+  assert.equal(studentLoginMatches({ ...base, name: "김민준", pin: "0472" }), true);
+  assert.equal(studentLoginMatches({ ...base, name: "김민준", pin: "9999" }), true); // 아무 PIN이나 넣어도 무시
+  assert.equal(studentLoginMatches({ ...base, name: "김민준", pin: undefined }), true);
+  assert.equal(studentLoginMatches({ ...base, name: " 김 민 준 ", pin: "" }), true);
+  assert.equal(studentLoginMatches({ ...base, storedPin: null, name: "김민준", pin: "" }), true); // PIN이 없는 학생도
+  assert.equal(studentLoginMatches({ ...base, name: "이서연", pin: "0472" }), false); // 이름이 틀리면 PIN이 맞아도 안 됨
+  assert.equal(studentLoginMatches({ ...base, name: "김민", pin: "" }), false);
+});
+
+test("PIN 칸을 비웠는지: 비었거나 공백·하이픈뿐이면 비운 것(PIN을 쓰는 학급에서 시도 횟수에 넣지 않음)", () => {
+  for (const v of ["", " ", "  -  ", "\t", undefined, null, 1234]) assert.equal(hasPinInput(v), false, String(v));
+  for (const v of ["0472", "0", "abcd", "04 72", "12"]) assert.equal(hasPinInput(v), true, v);
 });
 
 test("세션 지문 비교: 같을 때만 참, 없거나 형식이 다르면 거짓", () => {

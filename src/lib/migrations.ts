@@ -8,11 +8,12 @@
 //   남은 마이그레이션은 한 트랜잭션으로 함께 적용되므로, 중간에 실패하면 모두 되돌려지고 다음 요청에서 다시 시도합니다.
 // - 해시는 주석과 공백을 뺀 SQL로 만듭니다(주석만 고쳐도 해시는 같음). 기록용이며, 적용 여부는 id로 판단합니다.
 //
-// 새 마이그레이션 쓰는 법(예시, v2):
-//   { id: "0002_student_note", sql: `alter table students add column if not exists note text;` },
+// 새 마이그레이션 쓰는 법(예시):
+//   { id: "0003_student_note", sql: `alter table students add column if not exists note text;` },
 // - id는 '4자리 순번_이름'이고 순번은 앞 것보다 커야 합니다(tests/schema.test.ts가 검사).
-// - 가능하면 다시 실행해도 안전하게(if not exists 등) 쓰고, 오래 걸리는 작업(큰 표 다시 쓰기)은 피하세요.
+// - 다시 실행해도 안전하게(add column if not exists 등) 쓰고, 오래 걸리는 작업(큰 표 다시 쓰기)은 피하세요(tests/schema.test.ts가 검사).
 //   새 열은 null 허용 또는 상수 default로 추가하면 Postgres가 표를 다시 쓰지 않아 빠릅니다.
+//   not null 열에는 꼭 default를 주세요(이미 행이 있는 표에서 실패하지 않게).
 // - 새 표를 만들면 'alter table … enable row level security'도 함께 넣으세요.
 import { createHash } from "node:crypto";
 
@@ -20,9 +21,15 @@ export type Migration = { id: string; sql: string };
 
 export const BASE_MIGRATION_ID = "0001_base";
 
-// v2부터 여기에 덧붙입니다(아직 없음).
+// v2부터 여기에 덧붙입니다. 순서대로 쌓기만 하고, 배포한 것은 고치지 마세요.
 export const LATER_MIGRATIONS: readonly Migration[] = [
-  // { id: "0002_student_note", sql: `alter table students add column if not exists note text;` },
+  {
+    // 학급마다 학생 PIN을 쓸지(기본 켬). 이미 있는 학급도 켜진 채로 둡니다(상수 default라 표를 다시 쓰지 않음).
+    // PIN을 끄면 학급 코드·번호·이름만으로 들어오므로, 같은 반 친구가 다른 학생으로 들어가 글을 고치거나 지우거나 제출하고,
+    // 피드백 기회를 써 버리거나, 걱정되는 글을 써서 안전 신호가 엉뚱한 학생에게 붙게 할 수 있습니다. 시범 수업처럼 짧게 쓸 때만 끕니다.
+    id: "0002_class_require_pin",
+    sql: `alter table classes add column if not exists require_pin boolean not null default true;`,
+  },
 ];
 
 /** 실행할 전체 목록(기본 스키마 + 이후 마이그레이션, 순서대로) */

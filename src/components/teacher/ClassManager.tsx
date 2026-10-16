@@ -63,7 +63,13 @@ export default function ClassManager({ overview }: { overview: Overview }) {
   // 안전 신호(누가, 어떤 종류)도 기본으로 숨깁니다. 수업 시작 때 학급 코드를 보여 주려고 화면을 띄워도 친구들이 보지 못하게.
   // PIN처럼 저장하지 않으므로 페이지를 다시 열면 다시 숨겨집니다(30초 자동 새로 고침에는 그대로).
   const [showSafety, setShowSafety] = useState(false);
-  const [pendingRounds, setPendingRounds] = useState<number | null>(null);
+  // 설정(단계별 피드백 횟수, '학생 PIN 사용')을 바꾸는 동안 고른 값(value)을 먼저 보여 줍니다. 요청이 끝나고 새로 고친 서버 자료가
+  // 들어오면 버리고, 그 전에라도 서버 값이 바뀌면(from과 다름) 버립니다. 그 뒤로는 늘 서버 값을 따르므로, 다른 기기에서 다시 바꾼 값도
+  // '새로 고침'이나 30초 자동 새로 고침으로 그대로 보입니다(먼저 보여 준 값이 남아 서버 값을 가리지 않게).
+  const [pendingRounds, setPendingRounds] = useState<{ value: number; from: number } | null>(null);
+  const [pendingPin, setPendingPin] = useState<{ value: boolean; from: boolean } | null>(null);
+  if (pendingRounds && pendingRounds.from !== cls.max_feedback_rounds) setPendingRounds(null);
+  if (pendingPin && pendingPin.from !== cls.require_pin) setPendingPin(null);
   const [deleteCode, setDeleteCode] = useState("");
 
   // 학급이 열려 있는 동안 진행 상황을 30초마다 새로 고칩니다(화면을 보고 있을 때만).
@@ -87,7 +93,9 @@ export default function ClassManager({ overview }: { overview: Overview }) {
   }
 
   // 서버에 요청하고 결과 문구를 보여 준 뒤 화면을 새로 고칩니다. 성공하면 응답 본문, 실패하면 null.
-  async function call(url: string, method: string, body: unknown, okMsg: (d: Reply) => string): Promise<Reply | null> {
+  // settle: 성공한 뒤 새로 고친 서버 자료가 화면에 들어올 때 함께 할 일(먼저 보여 준 설정 값 버리기). 새로 고침과 같은 transition에서
+  // 부르므로 새 자료가 올 때까지는 먼저 보여 준 값이 남고(옛 값으로 잠깐 되돌아가 보이지 않음), 새 자료와 함께 서버 값으로 바뀝니다.
+  async function call(url: string, method: string, body: unknown, okMsg: (d: Reply) => string, settle?: () => void): Promise<Reply | null> {
     setMsg(null);
     setBusy(true);
     try {
@@ -98,7 +106,14 @@ export default function ClassManager({ overview }: { overview: Overview }) {
         return null;
       }
       setMsg(okMsg(data));
-      router.refresh();
+      if (settle) {
+        startRefresh(() => {
+          router.refresh();
+          settle();
+        });
+      } else {
+        router.refresh();
+      }
       return data;
     } catch {
       setMsg(NET_ERROR);
@@ -116,9 +131,26 @@ export default function ClassManager({ overview }: { overview: Overview }) {
   }
 
   async function setMaxRounds(n: number) {
-    setPendingRounds(n);
-    const ok = await call(classUrl, "PATCH", { maxFeedbackRounds: n }, () => "저장했습니다.");
+    setPendingRounds({ value: n, from: cls.max_feedback_rounds });
+    const ok = await call(classUrl, "PATCH", { maxFeedbackRounds: n }, () => "저장했습니다.", () => setPendingRounds(null));
     if (!ok) setPendingRounds(null);
+  }
+
+  // 학생 PIN 켜기·끄기. 학생 세션 지문에 이 설정이 들어 있어서, 바꾸면 이 학급 학생은 모두 다시 로그인해야 합니다(src/lib/pin.ts).
+  // PIN을 끄면 같은 반 친구(학급 코드·번호·이름을 다 앎)가 다른 학생으로 들어가 글을 고치거나 지우거나 제출하고, 피드백 기회를 써 버리거나,
+  // 걱정되는 글을 써서 안전 신호가 엉뚱한 학생에게 붙게 할 수 있습니다. 그래서 시범 수업처럼 짧게 쓸 때만 끄도록 확인을 받습니다.
+  async function setPinRequired(on: boolean) {
+    const question = on
+      ? `[${cls.name}] 학생 PIN을 켤까요?\n\n지금 로그인해 있는 학생은 모두 로그아웃되고, 학급 코드·번호·이름과 PIN(4자리)으로 다시 로그인해야 합니다. PIN을 끈 사이 다른 학생으로 들어와 있던 친구도 함께 로그아웃됩니다.\n\n전에 만든 PIN은 그대로입니다. 안내 카드를 인쇄해 나눠 주세요.${noPin > 0 ? `\n\nPIN이 없는 학생 ${noPin}명에게는 PIN을 새로 만듭니다.` : ""}`
+      : `[${cls.name}] 학생 PIN을 끌까요?\n\n끄면 학급 코드·번호·이름만으로 들어올 수 있어서, 같은 반 친구가 다른 학생으로 들어가 글을 고치거나 지우거나 제출할 수 있습니다. 그 학생의 피드백 기회를 써 버리거나, 걱정되는 글을 써서 안전 신호가 엉뚱한 학생에게 붙을 수도 있습니다.\n\n시범 수업처럼 짧게 쓸 때만 끄세요. 지금 로그인해 있는 학생은 모두 다시 로그인해야 합니다. 학생 PIN은 지우지 않으므로, 다시 켜면 전에 쓰던 PIN을 그대로 씁니다.`;
+    if (!confirm(question)) return;
+    setPendingPin({ value: on, from: cls.require_pin });
+    const ok = await call(classUrl, "PATCH", { requirePin: on }, (d) => {
+      if (!on) return "학생 PIN을 껐습니다. 학생은 학급 코드·번호·이름으로 다시 로그인해야 합니다.";
+      const made = Number(d.pins_created) || 0;
+      return `학생 PIN을 켰습니다. 학생은 PIN으로 다시 로그인해야 합니다. 안내 카드를 인쇄해 나눠 주세요.${made ? ` (PIN이 없던 ${made}명에게 PIN을 새로 만들었습니다.)` : ""}`;
+    }, () => setPendingPin(null));
+    if (!ok) setPendingPin(null);
   }
 
   function renameClass() {
@@ -234,11 +266,15 @@ export default function ClassManager({ overview }: { overview: Overview }) {
   }
 
   const noPin = students.filter((s) => !s.pin).length;
+  const requirePin = pendingPin && pendingPin.from === cls.require_pin ? pendingPin.value : cls.require_pin;
+  // PIN을 끄면 '학생 PIN 보기'도 끕니다(끈 동안은 그 칸이 보이지 않아 끌 수 없으므로). 다시 켰을 때 화면을 띄워 둔 채로 PIN이 바로 드러나지 않게.
+  if (!requirePin && showPins) setShowPins(false);
   const started = students.filter((s) => s.status !== null).length;
   const submitted = students.filter((s) => s.status === "submitted").length;
-  const maxRounds = pendingRounds ?? cls.max_feedback_rounds;
+  const maxRounds = pendingRounds && pendingRounds.from === cls.max_feedback_rounds ? pendingRounds.value : cls.max_feedback_rounds;
   const byId = new Map(students.map((s) => [s.id, s]));
-  const lockedIds = students.filter((s) => s.locked).map((s) => s.id);
+  // PIN을 끈 학급은 잠금을 쓰지 않으므로(학생 로그인이 잠금을 보지 않음) 잠김 표시·풀기 버튼도 보이지 않습니다.
+  const lockedIds = requirePin ? students.filter((s) => s.locked).map((s) => s.id) : [];
   // 안전 신호: 살펴볼 학생(아직 확인 안 함 또는 확인한 뒤 새 신호)과, 신호가 있었지만 '확인했어요'를 누른 학생
   const hasSignal = (s: Student) => s.concern_count > 0 || s.rule_concern !== null;
   const reviewCount = students.filter((s) => s.needs_review).length;
@@ -271,7 +307,9 @@ export default function ClassManager({ overview }: { overview: Overview }) {
           <p className="text-sm text-stone-600">
             학급 코드 <b className="font-mono text-base tracking-wider">{cls.class_code}</b> · 학생 {students.length}명 · 들어온 학생 {started}명 · 제출 {submitted}명
           </p>
-          <p className="text-xs text-stone-500">학생은 앱 주소에서 학급 코드, 번호, 이름, PIN(4자리)으로 들어옵니다.</p>
+          <p className="text-xs text-stone-500">
+            {requirePin ? "학생은 앱 주소에서 학급 코드, 번호, 이름, PIN(4자리)으로 들어옵니다." : "학생은 앱 주소에서 학급 코드, 번호, 이름으로 들어옵니다(PIN 없음)."}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => startRefresh(() => router.refresh())} disabled={refreshing}
@@ -283,6 +321,12 @@ export default function ClassManager({ overview }: { overview: Overview }) {
           </button>
         </div>
       </header>
+
+      {!requirePin && (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 print:hidden">
+          ⚠️ 학생 PIN을 쓰지 않는 학급입니다 — 학급 코드·번호·이름만으로 들어옵니다. 친구가 다른 학생으로 들어갈 수 있으니, 시범 수업이 끝나면 아래 &lsquo;학생 PIN 사용&rsquo;을 다시 켜세요.
+        </p>
+      )}
 
       {msg && (
         <p role="status" className="flex items-start justify-between gap-2 rounded-lg bg-stone-100 px-3 py-2 text-sm print:hidden">
@@ -314,6 +358,18 @@ export default function ClassManager({ overview }: { overview: Overview }) {
           )}
         </div>
         <p className="text-xs text-stone-500">수업이 끝나면 닫아 두세요. 집에서 혼자 계속 쓰거나 AI 피드백을 받지 못하게 되어 AI 비용도 아낄 수 있습니다.</p>
+        <div className="flex flex-col gap-0.5">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={requirePin} disabled={busy} onChange={(e) => void setPinRequired(e.target.checked)}
+              aria-describedby="pin-setting-hint" />
+            학생 PIN 사용
+          </label>
+          <p id="pin-setting-hint" className={`text-xs ${requirePin ? "text-stone-500" : "font-medium text-amber-900"}`}>
+            {requirePin
+              ? "PIN을 끄면 같은 반 친구가 다른 학생으로 들어갈 수 있습니다. 시범 수업처럼 짧게 쓸 때만 끄세요."
+              : "꺼져 있습니다. 학급 코드·번호·이름만으로 들어오고, 여러 번 틀려도 잠기지 않습니다. 켜거나 끄면 학생은 모두 다시 로그인해야 합니다."}
+          </p>
+        </div>
         <label className="flex flex-wrap items-center gap-2 text-sm">
           단계별 피드백 횟수
           <select value={maxRounds} disabled={busy} onChange={(e) => void setMaxRounds(Number(e.target.value))}
@@ -407,7 +463,7 @@ export default function ClassManager({ overview }: { overview: Overview }) {
                 잠긴 학생 모두 풀기 ({lockedIds.length}명)
               </button>
             )}
-            {noPin > 0 && (
+            {requirePin && noPin > 0 && (
               <button onClick={() => createPins(noPin)} disabled={busy} title="PIN이 없는 학생에게만 새로 만듭니다(이미 있는 PIN은 그대로)"
                 className="rounded-lg border border-sky-700 bg-white px-3 py-1.5 text-sm text-sky-800 disabled:opacity-50">
                 PIN 만들기 ({noPin}명)
@@ -421,9 +477,11 @@ export default function ClassManager({ overview }: { overview: Overview }) {
                 <input type="checkbox" checked={showSafety} onChange={(e) => setShowSafety(e.target.checked)} /> 안전 신호 보기
               </label>
             )}
-            <label className="flex items-center gap-1 text-xs" title="화면을 칠판·TV에 띄울 때는 끄세요">
-              <input type="checkbox" checked={showPins} onChange={(e) => setShowPins(e.target.checked)} /> 학생 PIN 보기
-            </label>
+            {requirePin && (
+              <label className="flex items-center gap-1 text-xs" title="화면을 칠판·TV에 띄울 때는 끄세요">
+                <input type="checkbox" checked={showPins} onChange={(e) => setShowPins(e.target.checked)} /> 학생 PIN 보기
+              </label>
+            )}
           </div>
         </div>
 
@@ -452,7 +510,7 @@ export default function ClassManager({ overview }: { overview: Overview }) {
                 <th className="px-2 py-2" title="받은 피드백 횟수(확인 피드백 포함)">피드백</th>
                 <th className="px-2 py-2" title="카드마다 학생이 마지막으로 고른 것">해 볼게요 / 안 할래요</th>
                 {showSafety && <th className="px-2 py-2" title="안전 신호(진단 아님): 표현 검사 표시와 AI 신호가 붙은 피드백 횟수">⚠️ 안전 신호</th>}
-                {showPins && <th className="px-2 py-2">PIN</th>}
+                {showPins && requirePin && <th className="px-2 py-2">PIN</th>}
                 <th className="px-2 py-2"></th>
               </tr>
             </thead>
@@ -462,7 +520,7 @@ export default function ClassManager({ overview }: { overview: Overview }) {
                   <td className="px-2 py-1.5 text-left">{s.number}</td>
                   <td className="px-2 py-1.5 text-left">
                     <Link href={`/teacher/class/${cls.id}/student/${s.id}`} className="text-sky-800 underline decoration-dotted">{s.name}</Link>
-                    {s.locked && <span className="ml-1 rounded bg-rose-100 px-1 text-xs text-rose-800">잠김</span>}
+                    {requirePin && s.locked && <span className="ml-1 rounded bg-rose-100 px-1 text-xs text-rose-800">잠김</span>}
                   </td>
                   <td className="px-2 py-1.5 text-left">{statusCell(s)}</td>
                   <td className="px-2 py-1.5">
@@ -499,7 +557,7 @@ export default function ClassManager({ overview }: { overview: Overview }) {
                       )}
                     </td>
                   )}
-                  {showPins && (
+                  {showPins && requirePin && (
                     <td className="whitespace-nowrap px-2 text-xs">
                       <span className="font-mono text-sm">{s.pin ?? "—"}</span>
                       <button disabled={busy} className="ml-2 text-stone-500 underline disabled:opacity-40" onClick={() => resetPin(s)}>
@@ -510,7 +568,7 @@ export default function ClassManager({ overview }: { overview: Overview }) {
                   <td className="space-x-2 whitespace-nowrap px-2 text-xs">
                     <Link href={`/teacher/class/${cls.id}/student/${s.id}`} className="text-sky-700 underline">보기</Link>
                     <button disabled={busy} className="text-stone-500 underline disabled:opacity-40" onClick={() => renameStudent(s)}>이름 고치기</button>
-                    {s.locked && (
+                    {requirePin && s.locked && (
                       <button disabled={busy} className="font-semibold text-rose-700 underline disabled:opacity-40" onClick={() => unlock(s)}>잠금 해제</button>
                     )}
                     {s.status === "submitted" && (
@@ -525,11 +583,18 @@ export default function ClassManager({ overview }: { overview: Overview }) {
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-stone-500">
-          PIN을 잊었거나 친구가 알게 되면 &lsquo;학생 PIN 보기&rsquo;를 켜고 &lsquo;다시 만들기&rsquo;를 누르세요. PIN을 8번 틀리면 잠깁니다(24시간 안에 처음은 10분, 두 번째는 60분, 세 번째부터는 선생님이 풀 때까지). &lsquo;잠금 해제&rsquo;나 PIN 다시 만들기로 바로 풀 수 있고, 그 뒤 다음 잠금은 다시 10분부터입니다.
-          다른 학생이 남의 번호로 일부러 틀려도 잠기므로, 여러 명이 한꺼번에 잠기면 &lsquo;잠긴 학생 모두 풀기&rsquo;로 한 번에 푸세요.
-          이름을 고쳐도 PIN을 다시 만들 때처럼 그 학생이 로그인해 있던 기기는 로그아웃됩니다.
-        </p>
+        {requirePin ? (
+          <p className="text-xs text-stone-500">
+            PIN을 잊었거나 친구가 알게 되면 &lsquo;학생 PIN 보기&rsquo;를 켜고 &lsquo;다시 만들기&rsquo;를 누르세요. PIN을 8번 틀리면 잠깁니다(24시간 안에 처음은 10분, 두 번째는 60분, 세 번째부터는 선생님이 풀 때까지). &lsquo;잠금 해제&rsquo;나 PIN 다시 만들기로 바로 풀 수 있고, 그 뒤 다음 잠금은 다시 10분부터입니다.
+            다른 학생이 남의 번호로 일부러 틀려도 잠기므로, 여러 명이 한꺼번에 잠기면 &lsquo;잠긴 학생 모두 풀기&rsquo;로 한 번에 푸세요.
+            이름을 고쳐도 PIN을 다시 만들 때처럼 그 학생이 로그인해 있던 기기는 로그아웃됩니다.
+          </p>
+        ) : (
+          <p className="text-xs text-stone-500">
+            학생 PIN을 끈 동안에는 PIN을 묻지 않고, 여러 번 틀려도 잠기지 않습니다. 학생 PIN은 지우지 않고 그대로 두므로, 다시 켜면 전에 쓰던 PIN으로 들어옵니다.
+            이름을 고치면 그 학생이 로그인해 있던 기기는 로그아웃됩니다.
+          </p>
+        )}
       </section>
 
       <section className="flex flex-col gap-2 rounded-xl border border-rose-200 bg-white p-4 print:hidden">
@@ -555,8 +620,14 @@ export default function ClassManager({ overview }: { overview: Overview }) {
             <p className="font-semibold">{cls.name} · {s.number}번 {s.name}</p>
             {origin && <p>주소: <b className="font-mono">{origin}</b></p>}
             <p>학급 코드: <b className="font-mono text-base">{cls.class_code}</b></p>
-            <p>PIN: <b className="font-mono text-base">{s.pin ?? "(선생님께 받기)"}</b></p>
-            <p className="text-xs">학급 코드 + 번호 + 이름 + PIN으로 들어가요. PIN은 친구에게 알려 주지 마세요.</p>
+            {requirePin ? (
+              <>
+                <p>PIN: <b className="font-mono text-base">{s.pin ?? "(선생님께 받기)"}</b></p>
+                <p className="text-xs">학급 코드 + 번호 + 이름 + PIN으로 들어가요. PIN은 친구에게 알려 주지 마세요.</p>
+              </>
+            ) : (
+              <p className="text-xs">학급 코드 + 번호 + 이름으로 들어가요. PIN 칸은 비워 두세요.</p>
+            )}
           </div>
         ))}
       </div>

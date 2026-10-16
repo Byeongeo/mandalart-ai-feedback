@@ -36,6 +36,12 @@ export default async function TeacherHome() {
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${c.is_open ? "bg-emerald-100 text-emerald-800" : "bg-stone-200 text-stone-600"}`}>
                     {c.is_open ? "열림" : "닫힘"}
                   </span>
+                  {!c.require_pin && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900"
+                      title="학생 PIN을 쓰지 않는 학급입니다. 학급 코드·번호·이름만으로 들어오므로, 시범 수업이 끝나면 학급 화면에서 PIN을 다시 켜세요.">
+                      PIN 끔
+                    </span>
+                  )}
                   {c.n_concern_students > 0 && (
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900"
                       title="표현 검사나 AI 신호가 붙은 학생 중 아직 ‘확인했어요’를 누르지 않았거나 그 뒤 새 신호가 생긴 학생 수입니다(진단 아님). 학급 화면에서 ‘안전 신호 보기’를 눌러 살펴보세요.">

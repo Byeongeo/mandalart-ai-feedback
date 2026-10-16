@@ -33,7 +33,7 @@ export default async function Home() {
     <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-8 px-4 py-12">
       <div>
         <h1 className="text-2xl font-bold">AI 만다라트 피드백</h1>
-        <p className="mt-2 text-sm text-stone-600">선생님께 받은 안내 카드를 보고 학급 코드, 번호, 이름, PIN을 입력하세요.</p>
+        <p className="mt-2 text-sm text-stone-600">선생님께 받은 안내 카드를 보고 학급 코드, 번호, 이름(PIN을 받았으면 PIN도)을 입력하세요.</p>
       </div>
       <StudentLoginForm />
       <Link href="/teacher/login" className="text-center text-xs text-stone-500 underline">

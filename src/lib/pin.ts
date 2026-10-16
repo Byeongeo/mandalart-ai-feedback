@@ -38,6 +38,12 @@ export function normalizePin(input: unknown): string {
   return typeof input === "string" ? input.replace(/[\s-]/g, "") : "";
 }
 
+// PIN 칸에 무엇이라도 넣었는지(공백·하이픈만 넣은 것은 비운 것으로 봄).
+// PIN을 쓰는 학급에서 PIN 칸을 비워 보낸 로그인은 시도 횟수에 넣지 않습니다(맞혀 본 PIN이 없음. src/app/api/auth/student/route.ts).
+export function hasPinInput(input: unknown): boolean {
+  return normalizePin(input).length > 0;
+}
+
 // 입력한 PIN이 저장된 PIN과 같은지. 길이와 상관없이 같은 시간이 걸리도록 해시끼리 비교합니다.
 export function pinMatches(input: unknown, stored: string): boolean {
   const a = createHash("sha256").update(normalizePin(input)).digest();
@@ -46,13 +52,43 @@ export function pinMatches(input: unknown, stored: string): boolean {
 }
 
 // ── 로그인 세션과 PIN 연결 ──
-// 학생 로그인 토큰에는 PIN 자체가 아니라 '지금 PIN(과 이름)의 지문'(비밀값으로 만든 HMAC-SHA256 앞 16자리)만 넣습니다.
+// 학생 로그인 토큰에는 PIN 자체가 아니라 '지금 PIN(과 이름, 학급의 PIN 설정)의 지문'(비밀값으로 만든 HMAC-SHA256 앞 16자리)만 넣습니다.
 // 교사가 PIN을 다시 만들거나 이름을 고치면(명렬표로 그 번호에 다른 학생이 들어온 경우 등) 지문이 달라져,
 // 그 전에 로그인한 세션은 더 이상 통하지 않습니다. 이름은 공백을 지우고 비교합니다(roster.ts의 normName과 같은 규칙).
 // PIN이 비어 있으면 빈 문자열의 지문을 씁니다. 비밀값 없이는 지문에서 PIN을 거꾸로 찾을 수 없습니다.
-export function pinFingerprint(secret: string | Uint8Array, pin: string | null | undefined, name?: string | null): string {
+//
+// requirePin(학급의 '학생 PIN 사용', classes.require_pin)도 지문에 넣습니다. 교사가 PIN을 켜거나 끄면 그 학급 학생의 세션이 모두 끝납니다.
+// - PIN을 켜면: PIN 없이(학급 코드·번호·이름만으로) 들어온 세션이 끝나, 다른 학생으로 들어와 있던 친구도 쫓겨납니다.
+// - PIN을 끄면: 모두 새로 들어옵니다.
+// PIN을 켠 학급의 지문은 이 설정이 생기기 전과 같은 글(`student-pin:PIN|이름`)로 만듭니다. 그래서 앱을 업데이트해도
+// 이미 로그인해 있던 학생은 로그아웃되지 않습니다. PIN을 끈 학급은 다른 머리말(`student-pin-off:`)을 써서 두 지문이 겹치지 않습니다.
+// (켬 → 끔 → 켬으로 바꾸면 처음 켬 때의 세션이 다시 통할 수 있지만, 그 세션도 PIN으로 들어온 것이라 지금 설정보다 약하지 않습니다.)
+export function pinFingerprint(
+  secret: string | Uint8Array,
+  pin: string | null | undefined,
+  name?: string | null,
+  requirePin: boolean = true,
+): string {
   const tail = name === undefined ? "" : `|${(name ?? "").replace(/\s+/g, "")}`;
-  return createHmac("sha256", secret).update(`student-pin:${pin ?? ""}${tail}`).digest("hex").slice(0, 16);
+  const head = requirePin ? "student-pin:" : "student-pin-off:";
+  return createHmac("sha256", secret).update(`${head}${pin ?? ""}${tail}`).digest("hex").slice(0, 16);
+}
+
+// 학생 로그인에서 이름(과 PIN)이 맞는지. 이름은 공백을 지우고 비교합니다(roster.ts의 normName과 같은 규칙).
+// - requirePin이 true(기본): 저장된 PIN이 있고 입력한 PIN과 같아야 합니다. PIN이 아직 없는 학생은 들어올 수 없습니다.
+// - requirePin이 false(학생 PIN을 끈 학급): 입력한 PIN은 보지 않고(무엇을 넣었든) 이름만 맞으면 됩니다.
+export function studentLoginMatches(o: {
+  requirePin: boolean;
+  storedName: string;
+  storedPin: string | null | undefined;
+  name: string;
+  pin: unknown;
+}): boolean {
+  const nameOk = o.storedName.replace(/\s+/g, "") === o.name.replace(/\s+/g, "");
+  if (!o.requirePin) return nameOk;
+  // 이름이 틀려도 PIN 비교는 똑같이 합니다(걸리는 시간으로 무엇이 틀렸는지 드러나지 않게).
+  const pinOk = isPin(o.storedPin) && pinMatches(o.pin, o.storedPin);
+  return nameOk && pinOk;
 }
 
 // 토큰의 지문이 지금 DB 값의 지문과 같은지(형식이 이상하거나 없으면 거짓)

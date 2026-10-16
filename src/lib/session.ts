@@ -6,7 +6,7 @@ import { sql } from "./db";
 import { pinFingerprint } from "./pin";
 import { SESSION_SECRET_KEY, envSessionSecret, newSessionSecret, sessionSecretWarning, usableStoredSecret } from "./secret";
 
-// pf: 로그인할 때의 지문. 학생은 PIN·이름의 지문(PIN 자체는 넣지 않음), 교사는 비밀번호 해시의 지문.
+// pf: 로그인할 때의 지문. 학생은 PIN·이름·학급 PIN 설정의 지문(PIN 자체는 넣지 않음), 교사는 비밀번호 해시의 지문.
 // currentStudent·currentTeacher가 지금 DB 값의 지문과 비교합니다.
 export type Session = { role: "student" | "teacher"; id: string; pf?: string };
 
@@ -52,9 +52,10 @@ async function key(): Promise<Uint8Array> {
   return new TextEncoder().encode(await sessionSecret());
 }
 
-// 학생의 지금 PIN과 이름의 지문(src/lib/pin.ts pinFingerprint). PIN을 다시 만들거나 이름이 바뀌면 값이 달라집니다.
-export async function studentPinTag(pin: string | null | undefined, name: string): Promise<string> {
-  return pinFingerprint(await key(), pin, name);
+// 학생의 지금 PIN·이름과 학급의 PIN 설정(require_pin)의 지문(src/lib/pin.ts pinFingerprint).
+// PIN을 다시 만들거나, 이름이 바뀌거나, 교사가 학급의 '학생 PIN 사용'을 켜거나 끄면 값이 달라집니다.
+export async function studentPinTag(pin: string | null | undefined, name: string, requirePin: boolean): Promise<string> {
+  return pinFingerprint(await key(), pin, name, requirePin);
 }
 
 // 교사 비밀번호 지문: 비밀번호를 다시 정하면(password_hash가 바뀌면) 그 전에 로그인한 교사 세션이 끝납니다.

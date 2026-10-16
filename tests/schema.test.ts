@@ -120,3 +120,48 @@ test("마이그레이션 기록 표: 여러 번 실행해도 안전하고 RLS를
 test("이후 마이그레이션은 지우는 문장(drop table·truncate·delete)을 쓰지 않는다", () => {
   for (const m of LATER_MIGRATIONS) assert.ok(!/\bdrop table\b|\btruncate\b|\bdelete from\b/i.test(meaningfulSql(m.sql)), m.id);
 });
+
+// 이미 배포한 마이그레이션의 해시(주석·공백을 뺀 SQL). 설치된 앱의 schema_migrations에 이 값이 적혀 있고, 다시 실행하지 않으므로
+// SQL을 고쳐도 설치된 DB에는 반영되지 않습니다. 바꿀 것이 있으면 고치지 말고 새 마이그레이션을 덧붙이세요.
+// 새 마이그레이션을 더하면 그 해시도 여기에 적습니다(아직 배포하기 전이면 고쳐도 됩니다).
+const SHIPPED_HASHES: Record<string, string> = {
+  "0001_base": "af0dafa37322d4bb",
+  "0002_class_require_pin": "85f8cf3a64e04c4b",
+};
+
+test("배포한 마이그레이션(기본 스키마 포함)의 SQL은 바뀌지 않았다(주석만 고치는 것은 괜찮음)", () => {
+  for (const m of MIGRATIONS) {
+    assert.ok(m.id in SHIPPED_HASHES, `${m.id}의 해시를 SHIPPED_HASHES에 적어 주세요: ${migrationHash(m)}`);
+    assert.equal(migrationHash(m), SHIPPED_HASHES[m.id], `${m.id}의 SQL이 바뀌었습니다. 고치지 말고 새 마이그레이션을 덧붙이세요.`);
+  }
+});
+
+// 이후 마이그레이션의 문장 목록(주석을 뺀 것)
+const laterStatements = (m: { sql: string }) => meaningfulSql(m.sql).split(";").map((s) => s.trim()).filter(Boolean);
+
+test("이후 마이그레이션은 여러 번 실행해도 안전하고, 이미 행이 있는 표에도 적용된다", () => {
+  for (const m of LATER_MIGRATIONS) {
+    for (const s of laterStatements(m)) {
+      if (/\badd column\b/i.test(s)) {
+        assert.match(s, /\badd column if not exists\b/i, `${m.id}: ${s}`);
+        // not null 열은 default가 있어야 이미 있는 행에 값이 채워집니다(없으면 설치된 앱에서 실패).
+        if (/\bnot null\b/i.test(s)) assert.match(s, /\bdefault\b/i, `${m.id}: ${s}`);
+      }
+      if (/^create /i.test(s)) assert.match(s, /^create (unique )?(table|index) if not exists /i, `${m.id}: ${s}`);
+      if (/^create table/i.test(s)) {
+        const table = /^create table if not exists (\w+)/i.exec(s)?.[1];
+        assert.ok(laterStatements(m).some((x) => new RegExp(`^alter table ${table} enable row level security$`, "i").test(x)), `${m.id}: ${table} RLS`);
+      }
+    }
+  }
+});
+
+test("0002: 학급마다 '학생 PIN 사용' 열을 더하고, 이미 있는 학급은 켜진 채로 둔다", () => {
+  const m = LATER_MIGRATIONS.find((x) => x.id === "0002_class_require_pin");
+  assert.ok(m);
+  assert.equal(meaningfulSql(m.sql), "alter table classes add column if not exists require_pin boolean not null default true;");
+  // 기본 스키마에는 없어야 합니다(0001_base의 뜻은 바꾸지 않음).
+  assert.ok(!/^\s*require_pin\b/m.test(fileSql));
+  // 기본 스키마만 적용된 설치(이 설정이 생기기 전 버전)에서는 다음에 적용할 첫 마이그레이션입니다.
+  assert.equal(pendingMigrations(MIGRATIONS, [BASE_MIGRATION_ID])[0]?.id, "0002_class_require_pin");
+});

@@ -21,15 +21,15 @@ export async function currentStudent(): Promise<StudentRow | null> {
   const s = await getSession();
   // 지문(pf)이 없는 토큰(이 확인을 넣기 전에 만든 토큰 포함)은 받지 않습니다.
   if (!s || s.role !== "student" || !s.pf) return null;
-  const [row] = await sql<(StudentRow & { pin: string | null })[]>`
-    select s.id, s.class_id, s.number, s.name, c.name as class_name, c.is_open, c.max_feedback_rounds, s.pin
+  const [row] = await sql<(StudentRow & { pin: string | null; require_pin: boolean })[]>`
+    select s.id, s.class_id, s.number, s.name, c.name as class_name, c.is_open, c.max_feedback_rounds, s.pin, c.require_pin
     from students s join classes c on c.id = s.class_id
     where s.id = ${s.id}`;
   if (!row) return null;
-  // 'PIN 다시 만들기'나 이름 고치기를 하면 로그인할 때의 지문과 달라지므로, 그 전에 열린 세션은 로그아웃된 것으로 봅니다.
-  // pin은 비교에만 쓰고 돌려주는 값에는 넣지 않습니다.
-  const { pin, ...student } = row;
-  if (!fingerprintMatches(await studentPinTag(pin, student.name), s.pf)) return null;
+  // 'PIN 다시 만들기', 이름 고치기, 학급의 '학생 PIN 사용' 켜기·끄기를 하면 로그인할 때의 지문과 달라지므로,
+  // 그 전에 열린 세션은 로그아웃된 것으로 봅니다. pin·require_pin은 비교에만 쓰고 돌려주는 값에는 넣지 않습니다.
+  const { pin, require_pin, ...student } = row;
+  if (!fingerprintMatches(await studentPinTag(pin, student.name, require_pin), s.pf)) return null;
   return student;
 }
 

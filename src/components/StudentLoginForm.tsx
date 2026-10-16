@@ -50,9 +50,13 @@ export default function StudentLoginForm() {
         이름
         <input name="name" required autoComplete="off" className={input.replace("uppercase tracking-wider", "")} />
       </label>
+      {/* 학급이 PIN을 쓰는지는 로그인하기 전에 알 수 없으므로(알려 주는 곳을 두지 않음) PIN 칸은 늘 두고, 비워도 보낼 수 있게 합니다.
+          PIN을 끈 학급은 서버가 PIN을 보지 않고, PIN을 쓰는 학급에서 비워 보내면 다른 실패와 같은 문구가 나옵니다(실패 횟수에는 넣지 않음). */}
       <label className="flex flex-col gap-1 text-sm font-medium">
-        PIN(4자리)
-        <input name="pin" required type="password" inputMode="numeric" pattern="[0-9]{4}" minLength={4} maxLength={4} autoComplete="off"
+        <span>
+          PIN(4자리) <span className="font-normal text-stone-600">— 선생님이 PIN을 나눠 주지 않았으면 비워 두세요</span>
+        </span>
+        <input name="pin" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} autoComplete="off"
           title="숫자 4자리" aria-describedby="pin-hint" className={input} />
         <span id="pin-hint" className="text-xs font-normal text-stone-500">안내 카드에 있는 숫자 4자리예요. 친구에게 알려 주지 마세요.</span>
       </label>
