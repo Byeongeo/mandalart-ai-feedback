@@ -8,7 +8,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "d1_databases": [{ "binding": "DB", "database_name": "mandalart-db", "database_id": "00000000-0000-0000-0000-000000000000" }],
-  "vars": { "APP_VERSION": "2.0.0" },
+  "vars": { "APP_VERSION": "2.0.1" },
   "alias": {
     "next/headers": "./worker/shims/next-headers.ts",
     "next/navigation": "./worker/shims/next-navigation.ts",

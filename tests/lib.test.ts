@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Roster, parseRoster, readRenames, renameWarning, rosterDiff, rosterRenames } from "../src/lib/roster.ts";
+import { Roster, parseRoster, readRenames, renameWarning, rosterDiff, rosterRenames, rosterTemplateCsv } from "../src/lib/roster.ts";
 import { emptyContent, inStage, stageNotReady, zeroCardMessage } from "../src/lib/mandalart.ts";
 
 test("명렬표: 엑셀 붙여넣기(탭)와 머리글, 세 번째 열부터는 무시", () => {
@@ -17,8 +17,10 @@ test("명렬표: CSV, BOM, 빈 줄, 따옴표", () => {
 
 test("명렬표: 번호 중복·숫자 아님·이름 빈칸 오류", () => {
   assert.ok(parseRoster("1,김민준\n1,이서연").errors.some((e) => e.includes("중복")));
-  assert.ok(parseRoster("1,김민준\n가,이서연").errors.some((e) => e.includes("숫자가 아닙니다")));
-  assert.ok(parseRoster("1,김민준\n2,").errors.some((e) => e.includes("이름이 비어")));
+  assert.ok(parseRoster("1,김민준\n가,이서연").errors.some((e) => e.includes("번호를 읽지 못했습니다")));
+  assert.ok(parseRoster("1,김민준\n2,\n3,이서연").errors.some((e) => e.includes("이름이 비어")));
+  // 끝부분의 이름 빈 줄은 양식에서 남은 칸으로 보고 건너뜀
+  assert.deepEqual(parseRoster("1,김민준\n2,"), { rows: [{ number: 1, name: "김민준" }], errors: [] });
   // 서버 검사(Roster)도 같은 규칙
   assert.equal(Roster.safeParse([{ number: 1, name: "가" }, { number: 1, name: "나" }]).success, false);
   assert.equal(Roster.safeParse([]).success, false);
@@ -102,4 +104,24 @@ test("카드 없는 첫 피드백 문구: 쓰는 중에는 다음 할 일까지,
     assert.equal(zeroCardMessage(stage, true), head);
     assert.doesNotMatch(zeroCardMessage(stage, true), /넘어가|제출/);
   }
+});
+
+test("명렬표: 직접 쓴 줄('1 홍길동', '1번 홍길동', '1. 홍길동')을 읽고, 숫자로 시작하는 첫 줄을 빼지 않는다", () => {
+  assert.deepEqual(parseRoster("1 홍길동\n2 김홍도\n3 김철수"), {
+    rows: [{ number: 1, name: "홍길동" }, { number: 2, name: "김홍도" }, { number: 3, name: "김철수" }], errors: [],
+  });
+  assert.deepEqual(parseRoster("1번 홍길동\n2. 김홍도\n3) 김 철수").rows.map((r) => r.name), ["홍길동", "김홍도", "김 철수"]);
+  assert.deepEqual(parseRoster("번호 이름\n1 홍길동").rows, [{ number: 1, name: "홍길동" }]);
+  assert.ok(parseRoster("1 홍길동\n홍길동2").errors.some((e) => e.startsWith("2번째 줄")));
+  assert.ok(parseRoster("홍길동").errors.some((e) => e.includes("읽은 학생이 없습니다")));
+});
+
+test("명렬표 양식: 내려받은 양식의 이름 빈 끝부분은 건너뛰고, 중간의 빈 이름은 오류", () => {
+  const tpl = rosterTemplateCsv(5);
+  assert.ok(tpl.startsWith("\uFEFF번호,이름\r\n1,\r\n"));
+  assert.ok(parseRoster(tpl).errors.some((e) => e.includes("읽은 학생이 없습니다")));
+  const filled = tpl.replace("1,\r\n", "1,홍길동\r\n").replace("2,\r\n", "2,김홍도\r\n");
+  assert.deepEqual(parseRoster(filled), { rows: [{ number: 1, name: "홍길동" }, { number: 2, name: "김홍도" }], errors: [] });
+  const gap = tpl.replace("1,\r\n", "1,홍길동\r\n").replace("3,\r\n", "3,김철수\r\n");
+  assert.ok(parseRoster(gap).errors.some((e) => e.includes("2번")));
 });
