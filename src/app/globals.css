@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+}
+
+body {
+  background: #f7f7f5;
+  color: #1c1c1a;
+  word-break: keep-all;
+}
+
+/* 키보드로 이동할 때 지금 위치가 잘 보이게 합니다(outline-none을 쓴 요소는 각자 따로 표시). */
+@layer base {
+  :focus-visible {
+    outline: 2px solid #0369a1;
+    outline-offset: 2px;
+  }
+}
+
+/* 휴대폰(640px 미만)에서 입력칸 글자가 16px보다 작으면 iOS Safari가 화면을 확대하므로 16px로 맞춥니다.
+   레이어 밖 규칙이라 text-sm 같은 유틸리티보다 우선합니다. */
+@media (max-width: 639px) {
+  input:not([type="radio"]):not([type="checkbox"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
