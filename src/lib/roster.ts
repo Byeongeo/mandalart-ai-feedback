@@ -20,26 +20,58 @@ export function normName(s: string): string {
   return s.replace(/\s+/g, "");
 }
 
-// 엑셀에서 복사한 표(탭) 또는 CSV(쉼표)를 읽습니다. 첫 줄이 머리글이면 건너뜁니다.
-// 열 순서: 번호, 이름 (그 뒤의 열은 무시)
+// 한 줄을 [번호, 이름]으로 나눕니다.
+// - 탭(엑셀에서 복사)이나 쉼표(CSV)가 있으면 그것으로 나눕니다(그 뒤의 열은 무시).
+// - 없으면 직접 쓴 줄로 봅니다: '1 홍길동', '1번 홍길동', '1. 홍길동', '1) 홍길동'(번호 뒤의 이름 전체가 이름).
+function splitLine(line: string): string[] {
+  if (line.includes("\t")) return line.split("\t");
+  if (line.includes(",")) return line.split(",");
+  const m = /^(\d+)\s*(?:번|\.|\))?\s*(.*)$/.exec(line);
+  return m ? [m[1], m[2]] : [line];
+}
+
+// 명렬표를 읽습니다: 엑셀에서 복사한 표(탭), CSV(쉼표), 직접 쓴 줄('1 홍길동') 모두 됩니다.
+// - 첫 줄이 숫자로 시작하지 않으면 머리글(번호, 이름)로 보고 건너뜁니다. 숫자로 시작하는 첫 줄은 학생으로 읽습니다
+//   (예전에는 '1 홍길동'처럼 띄어 쓴 첫 줄을 머리글로 보고 말없이 빼 버렸습니다).
+// - 양식(명렬표_양식.csv)에 미리 적어 둔 번호 중 이름을 채우지 않은 끝부분 줄은 건너뜁니다.
+//   중간에 이름이 빈 줄은 오류로 알려 줍니다(학생이 빠지지 않게).
 export function parseRoster(text: string): { rows: RosterRow[]; errors: string[] } {
   const rows: RosterRow[] = [];
   const errors: string[] = [];
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  lines.forEach((line, i) => {
-    const cells = (line.includes("\t") ? line.split("\t") : line.split(",")).map((c) => c.trim().replace(/^"|"$/g, ""));
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const cellsOf = lines.map((line) => splitLine(line).map((c) => c.trim().replace(/^"|"$/g, "").trim()));
+  // 이름이 있는 마지막 줄(그 뒤의 '번호만 있는 줄'은 양식에서 남은 칸으로 보고 건너뜀)
+  let lastNamed = -1;
+  cellsOf.forEach((cells, i) => {
+    if (cells[1]) lastNamed = i;
+  });
+  cellsOf.forEach((cells, i) => {
     const num = Number(cells[0]);
-    if (!cells[0] || !Number.isInteger(num)) {
-      if (i > 0) errors.push(`${i + 1}번째 줄: 번호가 숫자가 아닙니다 (${cells[0] ?? ""})`);
-      return; // 첫 줄은 머리글로 보고 건너뜀
+    if (!cells[0] || !/^\d+$/.test(cells[0]) || !Number.isInteger(num)) {
+      if (i === 0 && !/^\d/.test(cells[0] ?? "")) return; // 첫 줄은 머리글로 보고 건너뜀
+      errors.push(`${i + 1}번째 줄: 번호를 읽지 못했습니다 (${lines[i]}). '1 홍길동'처럼 번호를 먼저 쓰세요.`);
+      return;
     }
     const name = cells[1] ?? "";
-    if (!name) return void errors.push(`${i + 1}번째 줄: 이름이 비어 있습니다`);
+    if (!name) {
+      if (i > lastNamed) return; // 양식의 남은 칸
+      return void errors.push(`${i + 1}번째 줄: 이름이 비어 있습니다 (${num}번)`);
+    }
     rows.push({ number: num, name });
   });
   const parsed = Roster.safeParse(rows);
   if (!parsed.success && rows.length) errors.push(parsed.error.issues[0].message);
+  if (lines.length && !rows.length && !errors.length) {
+    errors.push("아직 읽은 학생이 없습니다. '1 홍길동'처럼 한 줄에 한 명씩 번호와 이름을 쓰거나, 양식에 이름을 채워 올리세요.");
+  }
   return { rows, errors };
+}
+
+/** 내려받는 명렬표 양식(엑셀에서 열리는 CSV, UTF-8 BOM): 머리글 + 번호 1~n(이름 칸은 비움) */
+export function rosterTemplateCsv(n = 35): string {
+  const lines = ["번호,이름"];
+  for (let i = 1; i <= n; i++) lines.push(`${i},`);
+  return "\uFEFF" + lines.join("\r\n") + "\r\n";
 }
 
 export type Rename = { number: number; from: string; to: string };
