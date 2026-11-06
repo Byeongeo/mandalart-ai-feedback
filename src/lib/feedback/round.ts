@@ -1,5 +1,6 @@
 import "server-only";
-import { sql } from "../db";
+import { NOW, nowPlus, sql } from "../db";
+import { ensureAiKey } from "../ai-key";
 import {
   MandalartContent, cellChanged, cellText, changedPartners, duplicateRemains, normalizeCell, recheckKind, stageDone, stageNotReady, targetKey, targetLabel,
   type Stage, type Target,
@@ -18,8 +19,12 @@ import { roundSchoolLevel, toSchoolLevel, type SchoolLevel } from "../school-lev
  * no_ai_key | closed | submitted | stale | not_ready | used_up | not_needed | wait | busy | too_many_failures | conflict | failed
  */
 export class FeedbackError extends Error {
-  constructor(message: string, readonly status = 400, readonly code?: string) {
+  readonly status: number;
+  readonly code?: string;
+  constructor(message: string, status = 400, code?: string) {
     super(message);
+    this.status = status;
+    this.code = code;
   }
 }
 
@@ -27,9 +32,11 @@ export const MIN_INTERVAL_MS = 30_000;
 // 요청 하나가 AI 호출(진단 + 카드)에 쓸 수 있는 전체 시간. 라우트 maxDuration(300초)보다 짧게 잡아,
 // AI가 느린 날에도 함수가 강제 종료되기 전에 오류를 기록하고 학생에게 다시 시도하라고 알립니다.
 const REQUEST_BUDGET_MS = 240_000;
-// 피드백을 만드는 중 표시(mandalarts.feedback_pending_until)를 얼마나 잡아 둘지. 함수가 강제로 끝나 표시를 지우지 못해도
-// 이 시간이 지나면 다시 요청할 수 있습니다. 라우트 maxDuration(300초)과 같게 둡니다.
-const PENDING_LEASE_MS = 300_000;
+// 피드백을 만드는 중 표시(mandalarts.feedback_pending_until)를 얼마나 잡아 둘지. Worker가 중간에 끝나(학생이 창을 닫는 등)
+// 표시를 지우지 못해도 이 시간이 지나면 다시 요청할 수 있습니다. AI 시간 예산(240초)보다 넉넉하게 둡니다.
+const PENDING_LEASE_SECONDS = 300;
+// '만드는 중' 표시 잡기를 다시 시도하는 횟수(읽은 뒤 표시를 잡기 전에 다른 저장이 끼어든 경우)
+const CLAIM_TRIES = 3;
 // 최근 5분 안에 피드백 오류가 3번 이상이면 더 부르지 않습니다(같은 오류로 크레딧이 계속 나가는 것을 막음).
 export const FAILURE_WINDOW_MINUTES = 5;
 export const MAX_RECENT_FAILURES = 3;
@@ -59,6 +66,7 @@ export async function requestFeedback(student: StudentRow, mandalartId: string, 
   const requestedAt = new Date();
   const deadline = requestedAt.getTime() + REQUEST_BUDGET_MS;
   if (!student.is_open) throw new FeedbackError(CLASS_CLOSED_MESSAGE, 409, "closed");
+  await ensureAiKey(); // 교사 화면에서 넣은 AI 키를 이 요청에서 쓸 수 있게 읽어 둠(assertAiReady·AI 호출보다 먼저)
   try {
     assertAiReady();
   } catch (e) {
@@ -66,39 +74,58 @@ export async function requestFeedback(student: StudentRow, mandalartId: string, 
     throw e;
   }
 
-  // AI를 부르기 전에 행을 잠그고 확인한 뒤 '만드는 중' 표시를 잡습니다. 두 번 누르기·두 기기·여러 단계 동시 요청은
-  // 하나만 통과하고 나머지는 409 busy로 돌려보내 유료 호출이 겹치지 않게 합니다. 표시는 끝나면(성공·실패 모두) 지웁니다.
-  // 피드백은 이때 확인한 글로 만듭니다(확인과 표시 사이에 다른 기기가 저장한 글로 만들지 않게).
-  // 학급의 학교급(AI 진단 기준·카드 질문 수준)도 이때 읽습니다. 교사가 바꾸면 그다음 첫 피드백부터 적용됩니다(학급 행은 잠그지 않음).
-  // 확인 피드백은 그 단계 첫 피드백의 학교급을 따릅니다(claimedFeedback의 roundSchoolLevel).
-  const pendingUntil = new Date(Date.now() + PENDING_LEASE_MS);
-  const { content, level } = await sql.begin(async (tx) => {
-    const [m] = await tx<{ status: string; revision: number; content: unknown; pending: boolean }[]>`
-      select status, revision, content, coalesce(feedback_pending_until > now(), false) as pending
-      from mandalarts where id = ${mandalartId} and student_id = ${student.id}
-      for update`;
+  const { content, level, lease } = await claimPending(student, mandalartId, meta);
+  try {
+    return await claimedFeedback(student, mandalartId, stage, content, level, requestedAt, deadline);
+  } finally {
+    // 내가 잡은 표시(같은 값)일 때만 지웁니다. 표시 시간이 지나 다른 요청이 새로 잡았으면 그대로 둡니다.
+    await sql`update mandalarts set feedback_pending_until = null
+              where id = ${mandalartId} and feedback_pending_until = ${lease}`.catch(() => {});
+  }
+}
+
+/**
+ * AI를 부르기 전에 확인한 뒤 '만드는 중' 표시(feedback_pending_until)를 잡습니다. 두 번 누르기·두 기기·여러 단계 동시 요청은
+ * 하나만 통과하고 나머지는 409 busy로 돌려보내 유료 호출이 겹치지 않게 합니다. 표시는 끝나면(성공·실패 모두) 지웁니다.
+ * 피드백은 이때 확인한 글로 만듭니다(확인과 표시 사이에 다른 기기가 저장한 글로 만들지 않게).
+ *
+ * 트랜잭션 없이(원래는 행 잠금 for update) 지키는 방법:
+ * 1) 행·최근 오류 수·학급 학교급을 읽어 확인합니다(제출함, 오래된 화면(stale), 최근 오류, 이미 만드는 중).
+ * 2) 표시는 '읽은 번호(revision)가 그대로이고, 작성 중이며, 만드는 중 표시가 없거나 지났을 때만' 잡는 한 문장으로 잡습니다
+ *    (update … where revision = 읽은 번호 and status = 'draft' and (표시 없음) returning). D1은 문장을 하나씩 차례로 실행하므로
+ *    동시에 온 요청 중 하나만 행을 바꾸고, 나머지는 바뀐 행이 없어 다시 읽은 뒤 busy를 받습니다(AI를 두 번 부르지 않음).
+ *    번호가 같으므로 글도 확인한 그대로입니다(글을 바꾸는 저장은 언제나 번호를 올림: save-mandalart.ts).
+ *    제출도 '만드는 중이 아닐 때만' 바꾸는 한 문장이라 표시를 잡은 뒤에는 제출되지 않습니다.
+ * 3) 표시 시각은 DB 시계로 적고(지금 + 300초), 돌려받은 값 그대로(lease)를 끝날 때 '내 표시일 때만 지우기'에 씁니다.
+ * 학급의 학교급(AI 진단 기준·카드 질문 수준)도 이때 읽습니다. 교사가 바꾸면 그다음 첫 피드백부터 적용됩니다.
+ * 확인 피드백은 그 단계 첫 피드백의 학교급을 따릅니다(claimedFeedback의 roundSchoolLevel).
+ */
+async function claimPending(student: StudentRow, mandalartId: string, meta: SaveMeta): Promise<{ content: MandalartContent; level: SchoolLevel; lease: string }> {
+  for (let tries = 0; tries < CLAIM_TRIES; tries++) {
+    const [m] = await sql<{ status: string; revision: number; content: unknown; pending: boolean; recent_failures: number; school_level: string | null }[]>`
+      select m.status, m.revision, m.content, coalesce(m.feedback_pending_until > ${NOW}, 0) as pending,
+        (select count(*) from event_log e
+          where e.student_id = ${student.id} and e.type = 'feedback_error'
+            and e.created_at > ${nowPlus(`-${FAILURE_WINDOW_MINUTES} minutes`)}) as recent_failures,
+        (select c.school_level from classes c where c.id = ${student.class_id}) as school_level
+      from mandalarts m where m.id = ${mandalartId} and m.student_id = ${student.id}`;
     if (!m) throw new FeedbackError("만다라트를 찾을 수 없어요.", 404);
     if (m.status === "submitted") throw new FeedbackError("이미 제출한 만다라트예요.", 409, "submitted");
     // 저장과 같은 확인(save-rules.ts의 knowsLatest): 화면이 서버의 지금 글을 모르면(다른 탭·기기가 더 나중에 고침) 받지 않습니다.
     if (!knowsLatest(m, meta)) throw new FeedbackError(STALE_MESSAGE, 409, "stale");
     // 같은 오류가 되풀이되면(키·크레딧·모델 문제 등) 학생이 계속 눌러도 AI를 부르지 않습니다.
-    const [{ n: recentFailures }] = await tx<{ n: number }[]>`
-      select count(*)::int as n from event_log
-      where student_id = ${student.id} and type = 'feedback_error'
-        and created_at > now() - make_interval(mins => ${FAILURE_WINDOW_MINUTES})`;
-    if (recentFailures >= MAX_RECENT_FAILURES) throw new FeedbackError(TOO_MANY_FAILURES_MESSAGE, 429, "too_many_failures");
+    if (m.recent_failures >= MAX_RECENT_FAILURES) throw new FeedbackError(TOO_MANY_FAILURES_MESSAGE, 429, "too_many_failures");
     if (m.pending) throw new FeedbackError(BUSY_MESSAGE, 409, "busy");
     const parsed = MandalartContent.parse(m.content);
-    const [cls] = await tx<{ school_level: string }[]>`select school_level from classes where id = ${student.class_id}`;
-    await tx`update mandalarts set feedback_pending_until = ${pendingUntil} where id = ${mandalartId}`;
-    return { content: parsed, level: toSchoolLevel(cls?.school_level) };
-  });
-  try {
-    return await claimedFeedback(student, mandalartId, stage, content, level, requestedAt, deadline);
-  } finally {
-    await sql`update mandalarts set feedback_pending_until = null
-              where id = ${mandalartId} and feedback_pending_until = ${pendingUntil}`.catch(() => {});
+    const [claimed] = await sql<{ lease: string }[]>`
+      update mandalarts set feedback_pending_until = ${nowPlus(`+${PENDING_LEASE_SECONDS} seconds`)}
+      where id = ${mandalartId} and student_id = ${student.id} and revision = ${m.revision} and status = 'draft'
+        and (feedback_pending_until is null or feedback_pending_until <= ${NOW})
+      returning feedback_pending_until as lease`;
+    if (claimed) return { content: parsed, level: toSchoolLevel(m.school_level), lease: claimed.lease };
+    // 읽은 뒤 표시를 잡기 전에 다른 요청이 끼어들었습니다(저장·제출·다른 피드백 요청). 다시 읽어 확인합니다.
   }
+  throw new FeedbackError(BUSY_MESSAGE, 409, "busy");
 }
 
 // '만드는 중' 표시를 잡은 뒤에 하는 일. 확인(회차·30초 간격)도 표시를 잡은 뒤에 해야 동시에 들어온 요청이 같은 확인을 통과하지 못합니다.
@@ -111,9 +138,9 @@ async function claimedFeedback(
   // n_rejected: 마지막 응답이 '안 할래요'인 문제 카드 수(모두 거부하면 그 단계는 끝난 것으로 봅니다)
   const prev = await sql<PrevRound[]>`
     select r.id, r.round_no, r.stage, r.block_index, r.attempt, r.created_at, r.content_snapshot,
-      r.diagnosis->>'school_level' as school_level,
-      (select count(*)::int from feedback_cards c where c.round_id = r.id and c.kind = 'issue') as n_cards,
-      (select count(*)::int from feedback_cards c where c.round_id = r.id and c.kind = 'issue'
+      json_extract(r.diagnosis, '$.school_level') as school_level,
+      (select count(*) from feedback_cards c where c.round_id = r.id and c.kind = 'issue') as n_cards,
+      (select count(*) from feedback_cards c where c.round_id = r.id and c.kind = 'issue'
          and (select fr.action from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1) = 'reject') as n_rejected
     from feedback_rounds r where r.mandalart_id = ${mandalartId} order by r.round_no`;
   const blockIndex = stage.kind === "block" ? stage.index : null;
@@ -140,13 +167,21 @@ async function claimedFeedback(
     const first = sameStage[0];
     if (first.n_cards === 0) throw new FeedbackError("이 단계는 고칠 점이 없어서 확인 피드백이 필요 없어요.", 400, "not_needed");
     firstContent = MandalartContent.parse(first.content_snapshot);
-    firstCards = await sql`
-      select c.id, c.category, c.target, coalesce(
-               (select it->>'evidence' from jsonb_array_elements(r.diagnosis->'items') it
-                where it->>'category' = c.category and it->'target' = c.target limit 1), '') as evidence,
+    const cardRows = await sql<{ id: string; category: Category; target: Target; action: string | null }[]>`
+      select c.id, c.category, c.target,
              (select fr.action from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1) as action
-      from feedback_cards c join feedback_rounds r on r.id = c.round_id
+      from feedback_cards c
       where c.round_id = ${first.id} and c.kind = 'issue' order by c.position`;
+    // 카드의 진단 근거(evidence): 그 회차 진단 기록에서 범주와 칸이 같은 첫 항목. 칸 비교는 JSON 글 대신 targetKey로 합니다
+    // (Postgres jsonb는 키 순서와 상관없이 같은지 봤으므로, 같은 결과가 나오게 JS에서 비교).
+    const [diag] = await sql<{ diagnosis: unknown }[]>`select diagnosis from feedback_rounds where id = ${first.id}`;
+    const items = ((diag?.diagnosis as { items?: unknown } | null)?.items ?? []) as { category?: unknown; target?: unknown; evidence?: unknown }[];
+    firstCards = cardRows.map((c) => {
+      const hit = Array.isArray(items)
+        ? items.find((it) => it && it.category === c.category && !!it.target && typeof it.target === "object" && targetKey(it.target as Target) === targetKey(c.target))
+        : undefined;
+      return { ...c, evidence: typeof hit?.evidence === "string" ? hit.evidence : "" };
+    });
     const fc = firstContent;
     const touched = (c: (typeof firstCards)[number]) =>
       cellChanged(fc, content, c.target) || changedPartners(c.category, c.target, fc, content).length > 0;
@@ -237,29 +272,37 @@ async function claimedFeedback(
     models: { diagnosis: metaLabel(diagMeta), cards: cardMeta || plans.length ? metaLabel(cardMeta) : null },
   };
 
-  let roundId: string;
+  // 회차와 카드를 한 번에(batch = 한 트랜잭션: 모두 저장되거나 하나도 저장되지 않음) 넣습니다. id는 미리 만들어 둡니다.
+  // - 아직 '작성 중'일 때만 저장합니다: 회차 넣기를 'insert … select … where 작성 중' 한 문장으로 하고, 카드 넣기는 '그 회차가 있을 때만'
+  //   하므로 제출된 뒤라면 회차도 카드도 생기지 않습니다(제출은 만드는 중에는 받지 않지만, 표시 시간이 지난 뒤 제출된 경우를 막음).
+  // - 같은 회차 번호(mandalart_id, round_no)는 unique 제약이 막습니다. 겹치면 batch 전체가 되돌려지고 먼저 끝난 쪽만 남습니다.
+  const roundId = crypto.randomUUID();
+  const cardRows = cards.map((c, i) => ({
+    id: crypto.randomUUID(), position: i, category: c.category, target: JSON.stringify(c.target), body: c.body, kind: c.kind,
+    prev_card_id: c.prevCardId ?? null,
+  }));
+  let inserted: boolean;
   try {
-    roundId = await sql.begin(async (tx) => {
-      // 아직 '작성 중'일 때만 저장합니다. 제출(save-mandalart.ts)은 만드는 중에는 받지 않지만, 표시 시간이 지난 뒤 제출된 경우
-      // 제출 뒤에 회차가 생겨 답할 수 없는 카드가 남지 않도록 여기서 한 번 더 확인합니다(행을 잠가 제출과 엇갈리지 않게).
-      const [cur] = await tx<{ status: string }[]>`select status from mandalarts where id = ${mandalartId} for share`;
-      if (cur?.status !== "draft") throw new FeedbackError("이미 제출한 만다라트라서 피드백을 저장하지 않았어요.", 409, "submitted");
-      const [r] = await tx<{ id: string }[]>`
-        insert into feedback_rounds (mandalart_id, round_no, stage, block_index, attempt, content_snapshot, diagnosis, model,
+    const [roundRows] = await sql.batch([
+      sql`
+        insert into feedback_rounds (id, mandalart_id, round_no, stage, block_index, attempt, content_snapshot, diagnosis, model,
                                      concern, concern_kind)
-        values (${mandalartId}, ${nextNo}, ${stage.kind}, ${blockIndex}, ${attempt}, ${tx.json(content)},
-                ${tx.json(diagnosis as never)}, ${metaLabel(diagMeta)}, ${concern.flag}, ${concern.kind})
-        returning id`;
-      for (const [i, c] of cards.entries()) {
-        await tx`insert into feedback_cards (round_id, position, category, target, body, kind, prev_card_id)
-                 values (${r.id}, ${i}, ${c.category}, ${tx.json(c.target)}, ${c.body}, ${c.kind}, ${c.prevCardId ?? null})`;
-      }
-      return r.id;
-    });
+        select ${roundId}, ${mandalartId}, ${nextNo}, ${stage.kind}, ${blockIndex}, ${attempt}, ${sql.json(content)},
+               ${sql.json(diagnosis)}, ${metaLabel(diagMeta)}, ${concern.flag}, ${concern.kind}
+        where exists (select 1 from mandalarts where id = ${mandalartId} and status = 'draft')
+        returning id`,
+      sql`
+        insert into feedback_cards (id, round_id, position, category, target, body, kind, prev_card_id)
+        select json_extract(j.value, '$.id'), ${roundId}, json_extract(j.value, '$.position'), json_extract(j.value, '$.category'),
+               json_extract(j.value, '$.target'), json_extract(j.value, '$.body'), json_extract(j.value, '$.kind'),
+               json_extract(j.value, '$.prev_card_id')
+        from json_each(${sql.json(cardRows)}) j
+        where exists (select 1 from feedback_rounds where id = ${roundId})`,
+    ]);
+    inserted = roundRows.length > 0;
   } catch (e) {
-    if (e instanceof FeedbackError) throw e;
     // '만드는 중' 표시 덕분에 거의 없지만, 표시 시간이 지난 뒤 같은 회차 번호로 겹친 경우: 먼저 끝난 쪽만 저장됩니다.
-    if ((e as { code?: string }).code === "23505") {
+    if (/UNIQUE constraint failed/i.test(e instanceof Error ? e.message : String(e))) {
       throw new FeedbackError(BUSY_MESSAGE, 409, "conflict");
     }
     await logFeedbackError(student.id, {
@@ -267,6 +310,7 @@ async function claimedFeedback(
     });
     throw new FeedbackError("피드백을 저장하는 중 문제가 생겼어요. 잠시 후 다시 눌러 주세요.", 503, "failed");
   }
+  if (!inserted) throw new FeedbackError("이미 제출한 만다라트라서 피드백을 저장하지 않았어요.", 409, "submitted");
 
   return loadRound(roundId);
 }
@@ -302,9 +346,9 @@ async function loadRounds(where: { roundId?: string; mandalartId?: string }): Pr
   if (rounds.length === 0) return [];
   const cards = await sql<(CardView & { round_id: string })[]>`
     select c.round_id, c.id, c.position, c.category, c.target, c.body, c.kind,
-      (select json_build_object('action', fr.action, 'reason_code', fr.reason_code, 'reason_text', fr.reason_text)
+      (select json_object('action', fr.action, 'reason_code', fr.reason_code, 'reason_text', fr.reason_text)
          from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1) as response
-    from feedback_cards c where c.round_id = any(${rounds.map((r) => r.id)}::uuid[]) order by c.position`;
+    from feedback_cards c where c.round_id in (select value from json_each(${sql.list(rounds.map((r) => r.id))})) order by c.position`;
   return rounds.map((r) => ({
     ...r,
     cards: cards.filter((c) => c.round_id === r.id).map((c) => {

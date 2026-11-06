@@ -20,7 +20,7 @@ type Resolved = { url: string; shortCircuit?: boolean };
     return next(specifier, context);
   },
 });
-// AI 설정은 부를 때마다 환경 변수에서 읽고, 모의 모드 여부만 불러올 때 정해집니다.
+// AI 설정은 부를 때마다 읽습니다(요청 문맥이 없는 이 테스트에서는 process.env). 모의 모드는 요청 문맥이 없으면 언제나 꺼집니다.
 delete process.env.FEEDBACK_MOCK;
 process.env.OPENROUTER_API_KEY = "test-key";
 process.env.OPENROUTER_BASE_URL = "http://openrouter.test/api/v1";

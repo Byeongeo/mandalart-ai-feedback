@@ -27,20 +27,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       rounds: number; cards: number; accepted: number; rejected: number;
     }[]>`
       select s.number, s.name, m.status, m.submitted_at, m.updated_at, m.content,
-        (select count(*)::int from feedback_rounds r where r.mandalart_id = m.id) as rounds,
+        (select count(*) from feedback_rounds r where r.mandalart_id = m.id) as rounds,
         coalesce(cnt.cards, 0) as cards, coalesce(cnt.accepted, 0) as accepted, coalesce(cnt.rejected, 0) as rejected
       from students s
       left join mandalarts m on m.student_id = s.id
-      left join lateral (
-        select count(*)::int as cards,
-          count(*) filter (where lr.action = 'accept')::int as accepted,
-          count(*) filter (where lr.action = 'reject')::int as rejected
-        from feedback_rounds r join feedback_cards c on c.round_id = r.id
-        left join lateral (
-          select fr.action from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1
-        ) lr on true
-        where r.mandalart_id = m.id
-      ) cnt on true
+      left join (
+        select x.mandalart_id, count(*) as cards, sum(x.action = 'accept') as accepted, sum(x.action = 'reject') as rejected
+        from (
+          select r.mandalart_id,
+            (select fr.action from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1) as action
+          from feedback_rounds r join feedback_cards c on c.round_id = r.id
+          where r.mandalart_id in (select m2.id from mandalarts m2 join students s2 on s2.id = m2.student_id where s2.class_id = ${id})
+        ) x group by x.mandalart_id
+      ) cnt on cnt.mandalart_id = m.id
       where s.class_id = ${id} order by s.number`;
     csv = toCsv(mandalartHeader(), rows.map((r) => {
       const parsed = r.content ? MandalartContent.safeParse(r.content) : null;
@@ -63,10 +62,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       join feedback_rounds r on r.id = c.round_id
       join mandalarts m on m.id = r.mandalart_id
       join students s on s.id = m.student_id
-      left join lateral (
-        select fr.action, fr.reason_code, fr.reason_text, fr.created_at from feedback_responses fr
-        where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1
-      ) lr on true
+      left join feedback_responses lr on lr.id = (
+        select fr.id from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1)
       where s.class_id = ${id}
       order by s.number, r.round_no, c.position`;
     csv = toCsv(cardsHeader(), rows.map((r) => cardRow({

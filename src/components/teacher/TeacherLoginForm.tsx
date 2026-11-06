@@ -28,7 +28,7 @@ export default function TeacherLoginForm() {
             return router.replace("/teacher");
           }
           const data = await res.json().catch(() => ({}));
-          setError(data.error ?? (res.status >= 500 ? "서버 오류입니다. Vercel 로그를 확인하세요." : "로그인 실패"));
+          setError(data.error ?? (res.status >= 500 ? "서버 오류입니다. 잠시 뒤 다시 시도하세요." : "로그인 실패"));
         } catch {
           setError("인터넷 연결을 확인하고 다시 시도하세요.");
         } finally {

@@ -20,7 +20,7 @@ type Reply = { ok?: boolean; error?: string; code?: string };
 function failText(status: number, data: Reply, fallback: string): string {
   if (typeof data.error === "string" && data.error) return data.error;
   if (status === 429) return "설정 코드를 너무 많이 틀렸습니다. 15분 뒤에 다시 시도하세요.";
-  if (status >= 500) return "서버 오류입니다. 잠시 뒤 다시 시도하고, 계속되면 Vercel 로그를 확인하세요.";
+  if (status >= 500) return "서버 오류입니다. 잠시 뒤 다시 시도하세요. 계속되면 설치 페이지에서 '업데이트'를 한 번 해 보세요.";
   return fallback;
 }
 
@@ -43,7 +43,8 @@ function Check({ ok, children }: { ok: boolean; children: React.ReactNode }) {
 }
 
 // 첫 교사 계정 만들기와 교사 비밀번호 다시 정하기(둘 다 설정 코드 SETUP_TOKEN이 필요). 열리면 먼저 설치 상태(DB 연결·표 만들기, SETUP_TOKEN, 교사 계정 유무)를 확인해 보여 줍니다.
-export default function SetupForm() {
+// initialToken: 설치 프로그램이 연 주소(#code=…)에서 읽은 설정 코드. 있으면 설정 코드 칸을 미리 채웁니다.
+export default function SetupForm({ initialToken = "" }: { initialToken?: string }) {
   const router = useRouter();
   const [status, setStatus] = useState<Status | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -62,7 +63,7 @@ export default function SetupForm() {
           setStatus(data);
           setLoadError(null);
         } else {
-          setLoadError(`설치 상태를 확인하지 못했습니다(오류 ${res.status}). Vercel의 배포 로그를 확인하세요.`);
+          setLoadError(`설치 상태를 확인하지 못했습니다(오류 ${res.status}). 잠시 뒤 새로 고침해 보세요.`);
         }
       })
       .catch(() => {
@@ -96,12 +97,12 @@ export default function SetupForm() {
       <Heading status={status} />
       <ul className="flex flex-col gap-1.5 rounded-xl border border-stone-300 bg-white p-4 text-sm">
         <Check ok={status.db.ok}>
-          {status.db.ok ? "데이터베이스(Neon)에 연결했고, 필요한 표를 준비했습니다." : status.db.error}
+          {status.db.ok ? "데이터베이스(Cloudflare D1)에 연결했고, 필요한 표를 준비했습니다." : status.db.error}
         </Check>
         <Check ok={status.tokenConfigured}>
           {status.tokenConfigured
             ? "설정 코드(SETUP_TOKEN)가 준비되어 있습니다."
-            : "설정 코드(SETUP_TOKEN)가 없거나 16자보다 짧습니다. Vercel → Settings → Environment Variables에 넣고 Redeploy하세요."}
+            : "설정 코드가 없습니다. 설치 페이지의 '업데이트'에서 '설정 코드도 새로 만들기'를 골라 업데이트하면 새 설정 코드를 받을 수 있어요."}
         </Check>
         {status.needsSetup === false && (
           <Check ok>이미 교사 계정이 있습니다. <Link href="/teacher/login" className="text-sky-700 underline">교사 로그인</Link>으로 들어가세요.
@@ -147,7 +148,7 @@ export default function SetupForm() {
             }
           }}
         >
-          <input name="token" placeholder="설정 코드 (Vercel에 넣은 SETUP_TOKEN 값)" aria-label="설정 코드" required autoComplete="off" className={input} />
+          <input name="token" placeholder="설정 코드 (설치 페이지가 알려 준 코드)" aria-label="설정 코드" required autoComplete="off" defaultValue={initialToken} className={input} />
           <input name="loginId" placeholder="아이디 (3자 이상)" aria-label="아이디" required minLength={3} maxLength={50} autoComplete="username" className={input} />
           <input name="displayName" placeholder="표시 이름 (예: 홍길동)" aria-label="표시 이름" required maxLength={30} className={input} />
           <input name="password" type="password" placeholder="비밀번호 (10자 이상)" aria-label="비밀번호" required minLength={10} autoComplete="new-password" className={input} />
@@ -162,7 +163,7 @@ export default function SetupForm() {
 
       {status.db.ok && status.needsSetup === false && !status.canReset && (
         <p className="rounded-lg bg-stone-100 px-3 py-2 text-sm text-stone-700">
-          비밀번호를 잊었다면: Vercel → Settings → Environment Variables에 설정 코드(SETUP_TOKEN, 16자 이상)를 넣고 Redeploy한 뒤,
+          비밀번호를 잊었다면: 설치 페이지의 &lsquo;업데이트&rsquo;에서 &lsquo;설정 코드도 새로 만들기&rsquo;를 골라 새 설정 코드를 받은 뒤,
           이 화면에서 &lsquo;비밀번호 다시 정하기&rsquo;를 할 수 있습니다.
         </p>
       )}
@@ -201,11 +202,11 @@ export default function SetupForm() {
           <div>
             <h2 className="font-semibold">비밀번호 다시 정하기</h2>
             <p className="mt-1 text-xs text-stone-600">
-              교사 비밀번호를 잊었을 때 씁니다. Vercel에 넣은 설정 코드(SETUP_TOKEN)와 교사 아이디가 있어야 합니다.
+              교사 비밀번호를 잊었을 때 씁니다. 설치 페이지가 알려 준 설정 코드와 교사 아이디가 있어야 합니다.
               바꾸면 바로 교사 화면으로 들어가고, 다른 기기에 남아 있던 교사 로그인은 끝납니다. 학급과 학생 자료는 그대로입니다.
             </p>
           </div>
-          <input name="token" placeholder="설정 코드 (Vercel에 넣은 SETUP_TOKEN 값)" aria-label="설정 코드" required autoComplete="off" className={input} />
+          <input name="token" placeholder="설정 코드 (설치 페이지가 알려 준 코드)" aria-label="설정 코드" required autoComplete="off" defaultValue={initialToken} className={input} />
           <input name="loginId" placeholder="교사 아이디" aria-label="교사 아이디" required maxLength={50} autoComplete="username" className={input} />
           <input name="password" type="password" placeholder="새 비밀번호 (10자 이상)" aria-label="새 비밀번호" required minLength={10} autoComplete="new-password" className={input} />
           <input name="password2" type="password" placeholder="새 비밀번호 확인" aria-label="새 비밀번호 확인" required minLength={10} autoComplete="new-password" className={input} />
@@ -229,7 +230,7 @@ function Heading({ status }: { status: Status | null }) {
       <p className="mt-2 text-sm text-stone-600">
         {exists
           ? "이 앱에는 이미 교사 계정이 있습니다. 비밀번호를 잊었을 때만 이 화면에서 설정 코드(SETUP_TOKEN)로 새 비밀번호를 정하세요."
-          : "배포한 뒤 한 번만 씁니다. Vercel에 넣은 설정 코드(SETUP_TOKEN)가 있어야 하고, 교사 계정이 이미 있으면 만들 수 없습니다."}
+          : "설치한 뒤 한 번만 씁니다. 설치 페이지가 알려 준 설정 코드가 있어야 하고, 교사 계정이 이미 있으면 만들 수 없습니다."}
       </p>
     </div>
   );

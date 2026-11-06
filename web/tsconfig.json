@@ -1,0 +1,29 @@
+{
+  // 브라우저 화면(web/)과 원래 Next.js 컴포넌트(src/components)용 타입 검사 설정.
+  // Worker 쪽(루트 tsconfig.json)과 나눈 까닭: 여기서는 브라우저 DOM 타입을 쓰고(Cloudflare Worker 타입 없음),
+  // next/link·next/navigation이 web/shims의 브라우저 흉내를 가리킵니다(Worker에서는 worker/shims를 가리킴).
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    // node: 화면 코드가 타입만 가져오는 서버 모듈(src/lib/queries 등)을 따라 읽을 때 필요합니다(화면 번들에는 들어가지 않음).
+    "types": ["vite/client", "node"],
+    "paths": {
+      "@/*": ["../src/*"],
+      "server-only": ["../worker/shims/empty.ts"],
+      "next/headers": ["../worker/shims/next-headers.ts"],
+      "next/link": ["./shims/link.tsx"],
+      "next/navigation": ["./shims/navigation.ts"]
+    }
+  },
+  "include": ["./**/*.ts", "./**/*.tsx", "../src/components/**/*.ts", "../src/components/**/*.tsx"]
+}

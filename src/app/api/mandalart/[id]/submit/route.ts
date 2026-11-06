@@ -12,7 +12,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!st) return json({ error: "다시 로그인해 주세요." }, 401);
   const { id } = await params;
   if (!isUuid(id)) return json({ error: "만다라트를 찾을 수 없어요." }, 404);
-  const body = await req.json().catch(() => null);
+  const body = (await req.json().catch(() => null)) as { content?: unknown } | null;
   const parsed = MandalartContent.safeParse(body?.content);
   if (!parsed.success) return json({ error: "내용 형식이 올바르지 않아요." }, 400);
   if (!st.is_open) return json({ error: CLASS_CLOSED_MESSAGE, closed: true }, 409);

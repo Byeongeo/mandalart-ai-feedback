@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { sql } from "@/lib/db";
+import { sql, type Query } from "@/lib/db";
 import { currentTeacher, json, ownsClass } from "@/lib/auth";
 import { Roster, rosterRenames, type Rename } from "@/lib/roster";
 import { generatePin } from "@/lib/pin";
@@ -13,8 +13,12 @@ const Body = z.object({
 
 // 이름은 교사에게 돌려주는 409 응답에만 담습니다(로그에는 넣지 않음).
 class RenamesNotConfirmed extends Error {
-  constructor(readonly renames: Rename[], readonly missing: number[]) {
+  readonly renames: Rename[];
+  readonly missing: number[];
+  constructor(renames: Rename[], missing: number[]) {
     super("renames not confirmed");
+    this.renames = renames;
+    this.missing = missing;
   }
 }
 
@@ -33,9 +37,13 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const confirmRenames = parsed.data.confirmRenames === true;
 
   try {
-    const result = await sql.begin(async (tx) => {
-      const existing = await tx<{ id: string; number: number; name: string }[]>`
-        select id, number, name from students where class_id = ${id} order by number for update`;
+    // 트랜잭션 없이(원래는 학생 행 잠금 for update): 지금 명단을 읽어 판단한 뒤, 새 학생 넣기와 이름 고치기를 batch 하나
+    // (= 한 트랜잭션)로 함께 합니다(모두 되거나 하나도 안 됨). 새 학생은 한 문장(json_each)으로 넣고, 그사이 다른 요청이 같은 번호를
+    // 먼저 넣었으면 건너뜁니다(on conflict do nothing, added는 실제로 넣은 수). '이름이 바뀌는 번호' 확인(classHasWork)은
+    // 원래도 만다라트 행을 잠그지 않고 읽었으므로 같은 방식입니다.
+    const result = await (async () => {
+      const existing = await sql<{ id: string; number: number; name: string }[]>`
+        select id, number, name from students where class_id = ${id} order by number`;
       const byNumber = new Map(existing.map((s) => [s.number, s]));
       const renames = rosterRenames(roster, existing);
       if (renames.length && !confirmRenames) {
@@ -45,19 +53,24 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
           throw new RenamesNotConfirmed(renames, missing);
         }
       }
-      let added = 0;
-      for (const r of roster) {
-        const ex = byNumber.get(r.number);
-        if (!ex) {
-          await tx`insert into students (class_id, number, name, pin) values (${id}, ${r.number}, ${r.name}, ${generatePin()})`;
-          added++;
-        }
+      const toAdd = roster
+        .filter((r) => !byNumber.has(r.number))
+        .map((r) => ({ id: crypto.randomUUID(), number: r.number, name: r.name, pin: generatePin() }));
+      const stmts: Query<unknown>[] = [];
+      if (toAdd.length) {
+        stmts.push(sql`
+          insert into students (id, class_id, number, name, pin)
+          select json_extract(j.value, '$.id'), ${id}, json_extract(j.value, '$.number'), json_extract(j.value, '$.name'),
+                 json_extract(j.value, '$.pin')
+          from json_each(${sql.json(toAdd)}) j where true
+          on conflict (class_id, number) do nothing`);
       }
       for (const rn of renames) {
-        await tx`update students set name = ${rn.to} where class_id = ${id} and number = ${rn.number}`;
+        stmts.push(sql`update students set name = ${rn.to} where class_id = ${id} and number = ${rn.number}`);
       }
-      return { added, renamed: renames.length };
-    });
+      const res = await sql.batch(stmts);
+      return { added: toAdd.length ? res[0].count : 0, renamed: renames.length };
+    })();
     return json({ ok: true, ...result });
   } catch (e) {
     if (e instanceof RenamesNotConfirmed) {

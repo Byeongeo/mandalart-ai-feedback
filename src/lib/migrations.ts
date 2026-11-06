@@ -9,12 +9,12 @@
 // - 해시는 주석과 공백을 뺀 SQL로 만듭니다(주석만 고쳐도 해시는 같음). 기록용이며, 적용 여부는 id로 판단합니다.
 //
 // 새 마이그레이션 쓰는 법(예시):
-//   { id: "0003_student_note", sql: `alter table students add column if not exists note text;` },
+//   { id: "0002_student_note", sql: `alter table students add column note text;` },
 // - id는 '4자리 순번_이름'이고 순번은 앞 것보다 커야 합니다(tests/schema.test.ts가 검사).
-// - 다시 실행해도 안전하게(add column if not exists 등) 쓰고, 오래 걸리는 작업(큰 표 다시 쓰기)은 피하세요(tests/schema.test.ts가 검사).
-//   새 열은 null 허용 또는 상수 default로 추가하면 Postgres가 표를 다시 쓰지 않아 빠릅니다.
-//   not null 열에는 꼭 default를 주세요(이미 행이 있는 표에서 실패하지 않게).
-// - 새 표를 만들면 'alter table … enable row level security'도 함께 넣으세요.
+// - 다시 실행해도 안전하게 쓰세요: 표·색인은 if not exists, 열 더하기는 SQLite에 'if not exists'가 없으므로 그냥
+//   'add column'(이미 있으면 db.ts가 'duplicate column' 오류를 적용된 것으로 봄). 오래 걸리는 작업(큰 표 다시 쓰기)은 피하세요.
+//   새 열은 null 허용 또는 상수 default로 더하고, not null 열에는 꼭 default를 주세요(이미 행이 있는 표에서 실패하지 않게).
+//   (tests/schema.test.ts가 검사)
 import { createHash } from "node:crypto";
 
 export type Migration = { id: string; sql: string };

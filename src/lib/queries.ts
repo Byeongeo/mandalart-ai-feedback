@@ -1,5 +1,6 @@
 import "server-only";
-import { sql } from "./db";
+import { NOW, sql } from "./db";
+import { ensureAiKey } from "./ai-key";
 import { MandalartContent, emptyContent, stageProgress, type RoundSummary, type Target } from "./mandalart";
 import { loadRoundsForMandalart, type RoundView } from "./feedback/round";
 import { aiStatus } from "./feedback/client";
@@ -25,7 +26,7 @@ export type StudentMandalart = MandalartRow & { revision: number };
 
 /** 학생의 만다라트(학생당 1개). 없으면 빈 만다라트를 만들어 돌려줍니다. */
 export async function getOrCreateMandalart(studentId: string): Promise<StudentMandalart> {
-  await sql`insert into mandalarts (student_id, content) values (${studentId}, ${sql.json(emptyContent())})
+  await sql`insert into mandalarts (id, student_id, content) values (${crypto.randomUUID()}, ${studentId}, ${sql.json(emptyContent())})
             on conflict (student_id) do nothing`;
   const [m] = await sql<(Omit<StudentMandalart, "content"> & { content: unknown })[]>`
     select id, content, status, submitted_at, updated_at, revision from mandalarts where student_id = ${studentId}`;
@@ -44,6 +45,7 @@ export type StudentHome = {
 export async function studentHome(st: StudentRow): Promise<StudentHome> {
   const mandalart = await getOrCreateMandalart(st.id);
   const rounds = await loadRoundsForMandalart(mandalart.id);
+  await ensureAiKey(); // aiStatus가 교사 화면에서 넣은 AI 키를 볼 수 있게
   return {
     student: { id: st.id, number: st.number, name: st.name, class_name: st.class_name, is_open: st.is_open, max_feedback_rounds: st.max_feedback_rounds },
     mandalart,
@@ -74,17 +76,18 @@ export type ClassListItem = {
 // '살펴볼 학생' 기준(첫 화면 배지, 학급 화면 상자·표 강조가 함께 씀): 표현 검사에 걸린 시각(rule_concern_at)이나
 // AI 신호 회차가 students.concern_reviewed_at보다 뒤면 살펴볼 학생입니다. 확인한 뒤 새로 걸리면 다시 셉니다.
 // 조각(fragment)으로 나눌 수 없어(db.ts 참고) listClasses와 classOverview에 같은 조건을 그대로 씁니다. 고칠 때 둘 다 고치세요.
+// 시각은 ISO 글(밀리초까지)이라 글자 비교 = 시각 비교이고, 확인한 적이 없으면 coalesce(…, '')로 '가장 이른 때'(Postgres판의 -infinity)로 봅니다.
 
 export async function listClasses(teacherId: string): Promise<ClassListItem[]> {
   return sql<ClassListItem[]>`
     select c.id, c.name, c.class_code, c.is_open, c.max_feedback_rounds, c.require_pin, c.school_level, c.created_at,
-      (select count(*)::int from students s where s.class_id = c.id) as n_students,
-      (select count(*)::int from students s join mandalarts m on m.student_id = s.id
+      (select count(*) from students s where s.class_id = c.id) as n_students,
+      (select count(*) from students s join mandalarts m on m.student_id = s.id
          where s.class_id = c.id and m.status = 'submitted') as n_submitted,
-      (select count(*)::int from students s join mandalarts m on m.student_id = s.id
-         where s.class_id = c.id and (m.rule_concern_at > coalesce(s.concern_reviewed_at, '-infinity')
-           or exists (select 1 from feedback_rounds r where r.mandalart_id = m.id and r.concern
-                        and r.created_at > coalesce(s.concern_reviewed_at, '-infinity')))) as n_concern_students
+      (select count(*) from students s join mandalarts m on m.student_id = s.id
+         where s.class_id = c.id and (m.rule_concern_at > coalesce(s.concern_reviewed_at, '')
+           or exists (select 1 from feedback_rounds r where r.mandalart_id = m.id and r.concern = 1
+                        and r.created_at > coalesce(s.concern_reviewed_at, '')))) as n_concern_students
     from classes c where c.teacher_id = ${teacherId} order by c.created_at`;
 }
 
@@ -190,46 +193,46 @@ export async function classOverview(teacherId: string, classId: string): Promise
   })[]>`
     select s.id, s.number, s.name, s.pin, m.content, m.rule_concern_kind, m.rule_concern_at, s.concern_reviewed_at,
       -- '살펴볼 학생' 기준(listClasses와 같게 유지)
-      coalesce(m.rule_concern_at > coalesce(s.concern_reviewed_at, '-infinity'), false) as rule_new,
-      exists (select 1 from feedback_rounds r where r.mandalart_id = m.id and r.concern
-                and r.created_at > coalesce(s.concern_reviewed_at, '-infinity')) as ai_new,
-      (s.locked_until is not null and s.locked_until > now()) as locked,
+      coalesce(m.rule_concern_at > coalesce(s.concern_reviewed_at, ''), 0) as rule_new,
+      exists (select 1 from feedback_rounds r where r.mandalart_id = m.id and r.concern = 1
+                and r.created_at > coalesce(s.concern_reviewed_at, '')) as ai_new,
+      (s.locked_until is not null and s.locked_until > ${NOW}) as locked,
       m.id as mandalart_id, m.status, m.submitted_at, m.updated_at,
-      ((select count(*) from jsonb_array_elements_text(m.content->'subs') x where trim(x) <> '')
-       + (select count(*) from jsonb_array_elements(m.content->'actions') a, jsonb_array_elements_text(a) y where trim(y) <> '')
-       + (case when trim(m.content->>'goal') <> '' then 1 else 0 end))::int as filled,
-      (select count(*)::int from feedback_rounds r where r.mandalart_id = m.id) as rounds,
+      ((select count(*) from json_each(m.content, '$.subs') x where trim(x.value) <> '')
+       + (select count(*) from json_each(m.content, '$.actions') a, json_each(a.value) y where trim(y.value) <> '')
+       + (case when trim(json_extract(m.content, '$.goal')) <> '' then 1 else 0 end)) as filled,
+      (select count(*) from feedback_rounds r where r.mandalart_id = m.id) as rounds,
       coalesce(cnt.cards, 0) as cards, coalesce(cnt.accepted, 0) as accepted, coalesce(cnt.rejected, 0) as rejected,
-      (select count(*)::int from feedback_rounds r where r.mandalart_id = m.id and r.concern) as concern_count
+      (select count(*) from feedback_rounds r where r.mandalart_id = m.id and r.concern = 1) as concern_count
     from students s
     left join mandalarts m on m.student_id = s.id
-    left join lateral (
-      select count(*)::int as cards,
-        count(*) filter (where lr.action = 'accept')::int as accepted,
-        count(*) filter (where lr.action = 'reject')::int as rejected
-      from feedback_rounds r join feedback_cards c on c.round_id = r.id
-      left join lateral (
-        select fr.action from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1
-      ) lr on true
-      where r.mandalart_id = m.id
-    ) cnt on true
+    -- 카드 수와 마지막 응답 기준 '해 볼게요'/'안 할래요' 수(Postgres판의 lateral 대신 묶음 표)
+    left join (
+      select x.mandalart_id, count(*) as cards, sum(x.action = 'accept') as accepted, sum(x.action = 'reject') as rejected
+      from (
+        select r.mandalart_id,
+          (select fr.action from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1) as action
+        from feedback_rounds r join feedback_cards c on c.round_id = r.id
+        where r.mandalart_id in (select m2.id from mandalarts m2 join students s2 on s2.id = m2.student_id where s2.class_id = ${classId})
+      ) x group by x.mandalart_id
+    ) cnt on cnt.mandalart_id = m.id
     where s.class_id = ${classId} order by s.number`;
 
   const summaries = await sql<(RoundSummary & { student_id: string })[]>`
     select m.student_id, r.stage, r.block_index, r.attempt,
-      (select count(*)::int from feedback_cards c where c.round_id = r.id and c.kind = 'issue') as n_cards,
-      (select count(*)::int from feedback_cards c where c.round_id = r.id and c.kind = 'issue'
+      (select count(*) from feedback_cards c where c.round_id = r.id and c.kind = 'issue') as n_cards,
+      (select count(*) from feedback_cards c where c.round_id = r.id and c.kind = 'issue'
          and (select fr.action from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1) = 'reject') as n_rejected
     from feedback_rounds r join mandalarts m on m.id = r.mandalart_id join students s on s.id = m.student_id
     where s.class_id = ${classId} order by r.round_no`;
 
   // 확인한 뒤(또는 아직 확인하지 않은) AI 신호 회차만 학생별로 묶습니다. 종류가 없는 신호는 '기타'로 셉니다.
   const aiRows = await sql<(Omit<AiConcernGroup, "kinds"> & { kinds: ConcernKind[] })[]>`
-    select s.id as student_id, s.number, array_agg(distinct coalesce(r.concern_kind, 'other')) as kinds,
-      count(*)::int as count, max(r.created_at) as last_at, (s.concern_reviewed_at is not null) as after_review
+    select s.id as student_id, s.number, json_group_array(distinct coalesce(r.concern_kind, 'other')) as kinds,
+      count(*) as count, max(r.created_at) as last_at, (s.concern_reviewed_at is not null) as after_review
     from feedback_rounds r join mandalarts m on m.id = r.mandalart_id join students s on s.id = m.student_id
-    where s.class_id = ${classId} and r.concern and r.created_at > coalesce(s.concern_reviewed_at, '-infinity')
-    group by s.id order by last_at desc`;
+    where s.class_id = ${classId} and r.concern = 1 and r.created_at > coalesce(s.concern_reviewed_at, '')
+    group by s.id, s.number, s.concern_reviewed_at order by last_at desc`;
   const aiConcerns: AiConcernGroup[] = aiRows.map((g) => ({
     ...g,
     kinds: CONCERN_KIND_KEYS.filter((k) => g.kinds.includes(k)),
@@ -248,6 +251,7 @@ export async function classOverview(teacherId: string, classId: string): Promise
     .filter((st) => st.rule_concern && !st.rule_concern.reviewed)
     .map((st) => ({ student_id: st.id, number: st.number, after_review: st.concern_reviewed_at !== null, ...st.rule_concern! }))
     .sort((a, b) => (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0));
+  await ensureAiKey(); // aiStatus가 교사 화면에서 넣은 AI 키를 볼 수 있게
   return {
     cls,
     students,
@@ -320,29 +324,29 @@ export async function studentDetail(teacherId: string, classId: string, studentI
     id: string; number: number; name: string; pin: string | null; locked: boolean; concern_reviewed_at: Date | null;
     class_name: string; max_feedback_rounds: number; require_pin: boolean;
   }[]>`
-    select s.id, s.number, s.name, s.pin, (s.locked_until is not null and s.locked_until > now()) as locked, s.concern_reviewed_at,
+    select s.id, s.number, s.name, s.pin, (s.locked_until is not null and s.locked_until > ${NOW}) as locked, s.concern_reviewed_at,
       c.name as class_name, c.max_feedback_rounds, c.require_pin
     from students s join classes c on c.id = s.class_id
     where s.id = ${studentId} and c.id = ${classId} and c.teacher_id = ${teacherId}`;
   if (!st) return null;
-  // rule_new·concern_reviewed: '살펴볼 학생' 기준(listClasses와 같음)을 DB에서 계산합니다(시각을 JS로 옮기면 마이크로초가 잘림).
+  // rule_new·concern_reviewed: '살펴볼 학생' 기준(listClasses와 같음)을 DB에서 계산합니다(목록·학급 화면과 같은 식).
   const [m] = await sql<(Omit<MandalartRow, "content"> & { content: unknown; rule_concern_kind: ConcernKind | null; rule_concern_at: Date | null; rule_new: boolean })[]>`
     select m.id, m.content, m.status, m.submitted_at, m.updated_at, m.rule_concern_kind, m.rule_concern_at,
-      coalesce(m.rule_concern_at > coalesce(s.concern_reviewed_at, '-infinity'), false) as rule_new
+      coalesce(m.rule_concern_at > coalesce(s.concern_reviewed_at, ''), 0) as rule_new
     from mandalarts m join students s on s.id = m.student_id where m.student_id = ${studentId}`;
   let rounds: TeacherRoundView[] = [];
   if (m) {
     const rs = await sql<(Omit<TeacherRoundView, "cards" | "content_snapshot"> & { content_snapshot: unknown })[]>`
       select r.id, r.round_no, r.stage, r.block_index, r.attempt, r.created_at, r.content_snapshot, r.concern, r.concern_kind,
-        (r.concern and r.created_at <= coalesce(s.concern_reviewed_at, '-infinity')) as concern_reviewed
+        (r.concern = 1 and r.created_at <= coalesce(s.concern_reviewed_at, '')) as concern_reviewed
       from feedback_rounds r join mandalarts m on m.id = r.mandalart_id join students s on s.id = m.student_id
       where r.mandalart_id = ${m.id} order by r.round_no`;
     const cards = rs.length
       ? await sql<(TeacherCardView & { round_id: string })[]>`
           select c.round_id, c.id, c.position, c.category, c.target, c.body, c.kind,
-            (select json_build_object('action', fr.action, 'reason_code', fr.reason_code, 'reason_text', fr.reason_text, 'created_at', fr.created_at)
+            (select json_object('action', fr.action, 'reason_code', fr.reason_code, 'reason_text', fr.reason_text, 'created_at', fr.created_at)
                from feedback_responses fr where fr.card_id = c.id order by fr.created_at desc, fr.id desc limit 1) as response
-          from feedback_cards c where c.round_id = any(${rs.map((r) => r.id)}::uuid[]) order by c.position`
+          from feedback_cards c where c.round_id in (select value from json_each(${sql.list(rs.map((r) => r.id))})) order by c.position`
       : [];
     rounds = rs.map((r) => ({
       ...r,

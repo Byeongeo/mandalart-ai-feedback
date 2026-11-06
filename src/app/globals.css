@@ -1,4 +1,7 @@
-@import "tailwindcss";
+/* 화면(web/)과 컴포넌트(src/components)에서만 클래스 이름을 찾습니다(빌드 결과를 넣은 worker/generated 등은 보지 않음). */
+@import "tailwindcss" source(none);
+@source "../components";
+@source "../../web";
 
 @theme inline {
   --font-sans: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;

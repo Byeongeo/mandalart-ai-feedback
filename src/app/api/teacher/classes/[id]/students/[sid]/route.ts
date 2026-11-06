@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { sql } from "@/lib/db";
+import { NOW, sql } from "@/lib/db";
 import { currentTeacher, isUuid, json } from "@/lib/auth";
 import { studentDetail } from "@/lib/queries";
 
@@ -40,23 +40,26 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     await sql`update students set concern_reviewed_at = null where id = ${sid}`;
     return json({ ok: true, reviewed_at: null });
   }
-  // 화면의 시각은 밀리초까지라 DB 시각(마이크로초)과 1밀리초 안쪽 차이는 같은 신호로 봅니다.
-  // 확인한 시각으로는 누른 시각(now()) 대신 '본 신호 + 1밀리초'를 적습니다. 누르기 전에 시작해 누른 뒤에 저장된 신호
-  // (트랜잭션 시작 시각이 찍혀 누른 시각보다 이를 수 있음)가 확인한 것으로 묻히지 않게 하려는 것입니다.
+  // 시각은 화면과 DB 모두 밀리초까지(ISO 글)입니다. 화면에 보인 신호 시각(seen)까지를 확인한 것으로 봅니다.
+  // 확인한 시각으로는 누른 시각(지금) 대신 '본 신호 + 1밀리초'를 적습니다. 누르기 전에 시작해 누른 뒤에 저장된 신호
+  // (요청이 시작된 시각이 찍혀 누른 시각보다 이를 수 있음)가 확인한 것으로 묻히지 않게 하려는 것입니다.
   // 앞서 더 늦은 시각까지 확인했으면 그대로 두고(되돌리지 않음), 지금보다 늦은 시각은 받지 않습니다.
+  // '본 뒤에 새 신호가 없을 때만 적기'는 한 문장이라 트랜잭션 없이도 확인과 쓰기 사이에 신호가 끼어들 수 없습니다.
+  // (ISO 글은 글자 비교 = 시각 비교. SQLite의 max/min(여러 인자)은 Postgres의 greatest/least와 같음)
   const seen = parsed.data.seenUntil ?? null;
+  const seenPlus = seen === null ? null : new Date(Date.parse(seen) + 1).toISOString();
   const [row] = await sql<{ concern_reviewed_at: Date }[]>`
-    update students s set concern_reviewed_at = case
-        when ${seen}::timestamptz is null then now()
-        else greatest(coalesce(s.concern_reviewed_at, '-infinity'), least(${seen}::timestamptz + interval '1 millisecond', now()))
+    update students set concern_reviewed_at = case
+        when ${seenPlus} is null then ${NOW}
+        else max(coalesce(concern_reviewed_at, ''), min(${seenPlus}, ${NOW}))
       end
-    where s.id = ${sid} and (${seen}::timestamptz is null or not exists (
-      select 1 from mandalarts m where m.student_id = s.id
-        and m.rule_concern_at >= ${seen}::timestamptz + interval '1 millisecond'
+    where id = ${sid} and (${seenPlus} is null or not exists (
+      select 1 from mandalarts m where m.student_id = ${sid}
+        and m.rule_concern_at >= ${seenPlus}
       union all
       select 1 from feedback_rounds r join mandalarts m on m.id = r.mandalart_id
-      where m.student_id = s.id and r.concern and r.created_at >= ${seen}::timestamptz + interval '1 millisecond'))
-    returning s.concern_reviewed_at`;
+      where m.student_id = ${sid} and r.concern = 1 and r.created_at >= ${seenPlus}))
+    returning concern_reviewed_at`;
   if (!row) return json({ error: "그사이 새 안전 신호가 생겼어요. 화면을 새로 고쳤으니 새 신호를 먼저 살펴봐 주세요." }, 409);
   return json({ ok: true, reviewed_at: row.concern_reviewed_at });
 }

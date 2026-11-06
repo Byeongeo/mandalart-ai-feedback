@@ -15,7 +15,9 @@ import * as mandalartFeedback from "../src/app/api/mandalart/[id]/feedback/route
 import * as mandalartOne from "../src/app/api/mandalart/[id]/route";
 import * as mandalartSubmit from "../src/app/api/mandalart/[id]/submit/route";
 import * as mandalartMine from "../src/app/api/mandalart/route";
+import * as teacherAiKey from "../src/app/api/teacher/ai-key/route";
 import * as teacherAiStatus from "../src/app/api/teacher/ai-status/route";
+import * as teacherAppUpdate from "../src/app/api/teacher/app-update/route";
 import * as classExport from "../src/app/api/teacher/classes/[id]/export/route";
 import * as classPins from "../src/app/api/teacher/classes/[id]/pins/route";
 import * as classReopen from "../src/app/api/teacher/classes/[id]/reopen/route";
@@ -26,7 +28,8 @@ import * as classStudents from "../src/app/api/teacher/classes/[id]/students/rou
 import * as classes from "../src/app/api/teacher/classes/route";
 import * as teacherStatus from "../src/app/api/teacher/status/route";
 
-type Handler = (req: Request, ctx: { params: Promise<Record<string, string>> }) => Response | Promise<Response>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 라우트마다 params 모양({ id } 등)이 다름
+type Handler = (req: Request, ctx: { params: Promise<any> }) => Response | Promise<Response>;
 type Mod = Partial<Record<"GET" | "POST" | "PUT" | "PATCH" | "DELETE", Handler>>;
 
 const app = new Hono<{ Bindings: AppEnv }>();
@@ -48,7 +51,9 @@ mount("/api/mandalart/:id/feedback", mandalartFeedback);
 mount("/api/mandalart/:id/submit", mandalartSubmit);
 mount("/api/mandalart/:id", mandalartOne);
 mount("/api/mandalart", mandalartMine);
+mount("/api/teacher/ai-key", teacherAiKey);
 mount("/api/teacher/ai-status", teacherAiStatus);
+mount("/api/teacher/app-update", teacherAppUpdate);
 mount("/api/teacher/classes/:id/export", classExport);
 mount("/api/teacher/classes/:id/pins", classPins);
 mount("/api/teacher/classes/:id/reopen", classReopen);
@@ -78,7 +83,7 @@ const SECURITY_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
 };
 
-function decode(b64: string): Uint8Array {
+function decode(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);

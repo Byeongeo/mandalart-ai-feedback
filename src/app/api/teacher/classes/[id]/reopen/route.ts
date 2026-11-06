@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { sql } from "@/lib/db";
+import { NOW, sql } from "@/lib/db";
 import { currentTeacher, json, ownsClass } from "@/lib/auth";
 
 const Body = z.object({ studentId: z.uuid() });
@@ -19,7 +19,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     where m.student_id = ${studentId} and s.class_id = ${id}`;
   if (!m) return json({ error: "이 학생은 아직 만다라트가 없습니다." }, 404);
   if (m.status !== "submitted") return json({ error: "아직 제출하지 않은 만다라트입니다." }, 409);
-  await sql`update mandalarts set status = 'draft', submitted_at = null, updated_at = now()
+  await sql`update mandalarts set status = 'draft', submitted_at = null, updated_at = ${NOW}
             where student_id = ${studentId} and status = 'submitted'`;
   return json({ ok: true, number: m.number });
 }

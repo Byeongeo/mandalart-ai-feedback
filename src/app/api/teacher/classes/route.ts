@@ -32,19 +32,26 @@ export async function POST(req: Request) {
   if (!parsed.success) return json({ error: parsed.error.issues[0]?.message ?? "입력값을 확인해 주세요." }, 400);
   const { name, roster, requirePin, schoolLevel } = parsed.data;
 
-  const cls = await sql.begin(async (tx) => {
-    let row: { id: string; class_code: string } | undefined;
-    for (let attempt = 0; !row && attempt < 5; attempt++) {
-      [row] = await tx<{ id: string; class_code: string }[]>`
-        insert into classes (teacher_id, name, class_code, require_pin, school_level)
-        values (${t.id}, ${name}, ${randomCode(6)}, ${requirePin}, ${schoolLevel})
-        on conflict (class_code) do nothing returning id, class_code`;
-    }
-    if (!row) throw new Error("학급 코드 생성 실패");
-    for (const r of roster) {
-      await tx`insert into students (class_id, number, name, pin) values (${row.id}, ${r.number}, ${r.name}, ${generatePin()})`;
-    }
-    return row;
-  });
+  // 학급과 학생을 batch 하나(= 한 트랜잭션)로 만듭니다: 모두 만들어지거나 하나도 만들어지지 않습니다(학생 없는 학급이 남지 않음).
+  // id·PIN은 미리 만들어 두고, 학생은 한 문장(json_each)으로 넣습니다(D1 문장 하나의 값 자리 100개 제한을 넘지 않게).
+  // 학급 코드가 이미 있는 코드와 겹치면 학급 넣기가 아무것도 하지 않고(on conflict do nothing), 학생 넣기도 '그 학급이 있을 때만'이라
+  // 아무것도 넣지 않습니다. 그때는 새 코드로 다시 시도합니다(5번까지).
+  let cls: { id: string; class_code: string } | undefined;
+  for (let attempt = 0; !cls && attempt < 5; attempt++) {
+    const classId = crypto.randomUUID();
+    const students = roster.map((r) => ({ id: crypto.randomUUID(), number: r.number, name: r.name, pin: generatePin() }));
+    const [inserted] = await sql.batch([
+      sql`insert into classes (id, teacher_id, name, class_code, require_pin, school_level)
+          values (${classId}, ${t.id}, ${name}, ${randomCode(6)}, ${requirePin}, ${schoolLevel})
+          on conflict (class_code) do nothing returning id, class_code`,
+      sql`insert into students (id, class_id, number, name, pin)
+          select json_extract(j.value, '$.id'), ${classId}, json_extract(j.value, '$.number'), json_extract(j.value, '$.name'),
+                 json_extract(j.value, '$.pin')
+          from json_each(${sql.json(students)}) j
+          where exists (select 1 from classes where id = ${classId})`,
+    ]);
+    cls = inserted[0] as { id: string; class_code: string } | undefined;
+  }
+  if (!cls) throw new Error("학급 코드 생성 실패");
   return json({ id: cls.id, class_code: cls.class_code });
 }

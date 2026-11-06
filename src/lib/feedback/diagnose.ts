@@ -1,6 +1,6 @@
 import "server-only";
 import * as z from "zod";
-import { MOCK, structuredCall, type CallMeta } from "./client";
+import { isMock, structuredCall, type CallMeta } from "./client";
 import { CATEGORIES, CONCERN_KIND_KEYS, normalizeConcern, type Category, type Concern, type ConcernKind } from "./categories";
 import { ruleConcern } from "../concern-rules";
 import { categoryFits, inStage, normalize, toPromptText, type MandalartContent, type Stage, type Target } from "../mandalart";
@@ -223,7 +223,7 @@ export async function aiDiagnose(
   note?: string,
   deadline?: number,
 ): Promise<{ items: DiagnosisItem[]; concern: Concern; meta: CallMeta | null }> {
-  if (MOCK) {
+  if (isMock()) {
     // 모의 모드: 안전 신호 흐름은 규칙 검사(concern-rules.ts)로 흉내 냅니다.
     const rule = ruleConcern(c);
     return { items: mockDiagnose(c, stage), concern: rule ? { flag: true, kind: rule.kind } : { flag: false, kind: null }, meta: null };

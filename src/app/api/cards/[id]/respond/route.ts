@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { sql } from "@/lib/db";
+import { nowPlus, sql } from "@/lib/db";
 import { CLASS_CLOSED_MESSAGE, currentStudent, isUuid, json } from "@/lib/auth";
 import { REJECT_REASON_KEYS, type RejectReason } from "@/lib/feedback/categories";
 
@@ -27,7 +27,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     select exists (
              select 1 from feedback_rounds r2
              where r2.mandalart_id = r.mandalart_id and r2.stage = r.stage
-               and r2.block_index is not distinct from r.block_index and r2.round_no > r.round_no
+               and r2.block_index is r.block_index and r2.round_no > r.round_no
            ) as superseded
     from feedback_cards c
     join feedback_rounds r on r.id = c.round_id
@@ -40,18 +40,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const reasonCode = b.action === "reject" ? b.reasonCode ?? null : null;
   const reasonText = b.action === "reject" && b.reasonText ? b.reasonText : null;
   // 같은 응답을 짧은 시간에 다시 보낸 경우(두 번 누름, 다시 보내기)는 한 번만 저장합니다.
-  await sql.begin(async (tx) => {
-    await tx`select pg_advisory_xact_lock(hashtext(${id}))`;
-    const [dup] = await tx`
+  // 트랜잭션·잠금 없이: '마지막 응답이 10초 안의 같은 응답이 아니면 넣기'를 한 문장(insert … select … where not exists)으로 합니다.
+  // D1은 문장을 하나씩 차례로 실행하므로 동시에 두 번 와도 두 번째 문장은 첫 번째가 넣은 응답을 보고 넣지 않습니다.
+  // (SQLite의 'is'는 Postgres의 'is not distinct from'과 같습니다: null끼리도 같다고 봄.)
+  await sql`
+    insert into feedback_responses (card_id, action, reason_code, reason_text)
+    select ${id}, ${b.action}, ${reasonCode}, ${reasonText}
+    where not exists (
       select 1 from (
         select action, reason_code, reason_text, created_at from feedback_responses
         where card_id = ${id} order by created_at desc, id desc limit 1
       ) l
-      where l.action = ${b.action} and l.reason_code is not distinct from ${reasonCode}
-        and l.reason_text is not distinct from ${reasonText} and l.created_at > now() - interval '10 seconds'`;
-    if (dup) return;
-    await tx`insert into feedback_responses (card_id, action, reason_code, reason_text)
-      values (${id}, ${b.action}, ${reasonCode}, ${reasonText})`;
-  });
+      where l.action = ${b.action} and l.reason_code is ${reasonCode}
+        and l.reason_text is ${reasonText} and l.created_at > ${nowPlus("-10 seconds")})`;
   return json({ ok: true });
 }

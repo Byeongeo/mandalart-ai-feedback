@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AiErrorCode } from "@/lib/feedback/ai-errors";
 import { fmtKst } from "../format";
 
@@ -45,7 +45,8 @@ function isReply(v: unknown): v is AiStatusReply {
 
 // 교사 화면 위쪽의 AI 상태: 키가 없거나 모의 모드인지, 최근 24시간의 피드백 오류(쉬운 설명과 시각),
 // 'AI 연결 확인' 버튼(피드백과 같은 조건으로 AI를 실제로 한 번 짧게 불러 봄. 학생 글은 보내지 않고, 요금은 아주 조금 듦).
-export default function AiStatusBanner({ ai }: { ai: Basic }) {
+// checkRequest: 바뀔 때마다 'AI 연결 확인'을 저절로 한 번 합니다(교사 첫 화면의 'AI 연결 키'를 저장한 뒤).
+export default function AiStatusBanner({ ai, checkRequest = 0 }: { ai: Basic; checkRequest?: number }) {
   const [recent, setRecent] = useState<RecentError[] | null>(null);
   const [check, setCheck] = useState<AiCheck | null>(null);
   const [checking, setChecking] = useState(false);
@@ -85,6 +86,15 @@ export default function AiStatusBanner({ ai }: { ai: Basic }) {
     }
   }
 
+  const lastRequest = useRef(checkRequest);
+  useEffect(() => {
+    if (checkRequest === lastRequest.current) return;
+    lastRequest.current = checkRequest;
+    void runCheck();
+    // runCheck는 그릴 때마다 새로 만들어지므로 checkRequest가 바뀔 때만 부릅니다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkRequest]);
+
   const groups = groupErrors(recent ?? []);
 
   return (
@@ -98,8 +108,7 @@ export default function AiStatusBanner({ ai }: { ai: Basic }) {
         <div role="alert" className="flex flex-col gap-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
           <p className="font-semibold">⚠️ AI 키가 아직 없어서 학생들이 AI 피드백을 받을 수 없습니다.</p>
           <p>
-            Vercel 대시보드 → 이 프로젝트 → <b>Settings → Environment Variables</b>에 <code className="font-mono">OPENROUTER_API_KEY</code>를 넣고,
-            <b> Deployments</b>에서 <b>Redeploy</b>를 누르세요. 만다라트 쓰기와 제출은 키가 없어도 됩니다.
+            교사 첫 화면의 <b>&lsquo;AI 연결 키&rsquo;</b>에 연수 강사에게 받은 OpenRouter 키를 붙여 넣고 저장하세요. 만다라트 쓰기와 제출은 키가 없어도 됩니다.
           </p>
         </div>
       )}

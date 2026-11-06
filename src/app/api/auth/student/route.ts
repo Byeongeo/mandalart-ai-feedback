@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { sql } from "@/lib/db";
+import { NOW, nowPlus, sql } from "@/lib/db";
 import { createSession, studentPinTag } from "@/lib/session";
 import { json } from "@/lib/auth";
 import { LOCK_LOOKBACK_HOURS, MAX_FAILS, hasPinInput, lockMinutes, lockedMessage, studentLoginMatches } from "@/lib/pin";
@@ -26,10 +26,10 @@ export async function POST(req: Request) {
   // require_pin: 학급의 '학생 PIN 사용'(classes.require_pin). 끈 학급은 PIN을 보지 않고 잠금도 쓰지 않습니다(아래).
   const [st] = await sql<{ id: string; name: string; pin: string | null; require_pin: boolean; recent_locks: number }[]>`
     select s.id, s.name, s.pin, c.require_pin,
-      (select count(*)::int from event_log e
+      (select count(*) from event_log e
         where e.student_id = s.id and e.type = 'login_locked'
-          and e.created_at > greatest(now() - make_interval(hours => ${LOCK_LOOKBACK_HOURS}),
-            coalesce((select max(u.created_at) from event_log u where u.student_id = s.id and u.type = 'login_unlocked'), '-infinity'))
+          and e.created_at > max(${nowPlus(`-${LOCK_LOOKBACK_HOURS} hours`)},
+            coalesce((select max(u.created_at) from event_log u where u.student_id = s.id and u.type = 'login_unlocked'), ''))
       ) as recent_locks
     from students s join classes c on c.id = s.class_id
     where c.class_code = ${classCode} and s.number = ${number}`;
@@ -54,19 +54,22 @@ export async function POST(req: Request) {
   const lockMins = lockMinutes(st.recent_locks);
 
   // 이름을 확인하기 전에 시도 횟수를 한 번의 UPDATE로 먼저 올립니다(동시에 여러 번 보내도 횟수가 빠지지 않음).
+  // 트랜잭션이 없어도 되는 까닭: 잠금 확인·횟수 올리기·잠그기가 모두 이 한 문장 안에 있고, D1은 한 DB의 문장을 하나씩 차례로
+  // 실행합니다(SET의 식은 모두 바꾸기 전 값으로 계산). 그래서 동시에 들어온 시도도 저마다 다른 횟수를 받고, 8번째에서 정확히 잠깁니다.
   // 잠겨 있으면 행이 갱신되지 않습니다. 잠금이 풀린 뒤 첫 시도는 1부터 다시 셉니다. 맞히면 아래에서 0으로 되돌립니다.
   // 잠금 시간: 24시간 안에 첫 잠금 10분, 두 번째 60분, 세 번째부터는 선생님이 풀 때까지(30일).
   const [attempt] = await sql<{ failed_logins: number }[]>`
     update students set
       failed_logins = case when locked_until is not null then 1 else failed_logins + 1 end,
       locked_until = case when (case when locked_until is not null then 1 else failed_logins + 1 end) >= ${MAX_FAILS}
-        then now() + make_interval(mins => ${lockMins}) else null end
-    where id = ${st.id} and (locked_until is null or locked_until <= now())
+        then strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ${`+${lockMins} minutes`}) else null end
+    where id = ${st.id} and (locked_until is null or locked_until <= ${NOW})
     returning failed_logins`;
   if (!attempt) {
+    // 남은 시간(분, 소수): lockedMessage가 올림합니다.
     const [left] = await sql<{ mins: number | null }[]>`
-      select ceil(extract(epoch from (locked_until - now())) / 60)::int as mins
-      from students where id = ${st.id} and locked_until > now()`;
+      select (julianday(locked_until) - julianday('now')) * 1440 as mins
+      from students where id = ${st.id} and locked_until > ${NOW}`;
     return json({ error: lockedMessage(left?.mins) }, 429);
   }
   // 이름과 PIN이 모두 맞아야 합니다. 틀린 PIN도 틀린 이름과 똑같이 실패 횟수에 들어가고,
@@ -76,7 +79,7 @@ export async function POST(req: Request) {
     // 이번 실패로 잠겼으면 잠금을 기록하고(내용은 비움: PIN·이름을 남기지 않음) 바로 잠김 안내(429)를 보여 줍니다.
     // 8번째에 맞게 입력한 경우는 아래에서 잠금을 지우므로 기록하지 않습니다.
     if (attempt.failed_logins >= MAX_FAILS) {
-      await sql`insert into event_log (student_id, type, payload) values (${st.id}, 'login_locked', '{}'::jsonb)`;
+      await sql`insert into event_log (student_id, type, payload) values (${st.id}, 'login_locked', '{}')`;
       return json({ error: lockedMessage(lockMins) }, 429);
     }
     return json({ error: WRONG }, 401);

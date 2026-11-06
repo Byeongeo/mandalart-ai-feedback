@@ -8,11 +8,11 @@ export const AI_ERROR_CODES = [
 export type AiErrorCode = (typeof AI_ERROR_CODES)[number];
 
 export const AI_ERROR_MESSAGES: Record<AiErrorCode, string> = {
-  no_key: "AI 키(OPENROUTER_API_KEY)가 없습니다. Vercel > Settings > Environment Variables에 넣고 Redeploy하세요.",
-  auth: "AI 키가 맞지 않거나 지워졌습니다(401). OpenRouter > Keys에서 키를 확인하고 Vercel에 다시 넣은 뒤 Redeploy하세요.",
+  no_key: "AI 키가 없습니다. 교사 화면의 'AI 키' 칸에 연수에서 받은 OpenRouter 키(sk-or-로 시작)를 붙여 넣고 저장하세요.",
+  auth: "AI 키가 맞지 않거나 지워졌습니다(401). 받은 키를 다시 확인해 교사 화면의 'AI 키' 칸에 새로 붙여 넣으세요.",
   credit: "OpenRouter 크레딧이 부족하거나 키 사용 한도에 닿았습니다(402). OpenRouter > Credits 잔액과 키의 한도(Limit)를 확인하세요.",
   forbidden: "OpenRouter의 내용 검사에서 요청이 거절되었습니다(403). 학생 글에 걱정되는 표현이 있는지 직접 살펴보세요.",
-  model_not_found: "설정된 AI 모델 이름을 OpenRouter에서 찾지 못했습니다. OPENROUTER_MODEL 값(비워 두면 기본 모델)을 확인하세요.",
+  model_not_found: "설정된 AI 모델 이름을 OpenRouter에서 찾지 못했습니다. Cloudflare에 넣은 OPENROUTER_MODEL 값(비워 두면 기본 모델)을 확인하세요.",
   no_provider: "학생 글을 보관하지 않는 조건(ZDR)에 맞는 AI 제공사를 지금 찾지 못했습니다(404). 잠시 뒤 다시 해 보거나 모델 설정을 확인하세요.",
   bad_request: "AI 요청이 거절되었습니다(400). 잠시 뒤 다시 해 보고, 계속되면 모델 설정을 확인하세요.",
   rate_limit: "AI 요청이 한꺼번에 너무 많았습니다(429). 잠시 뒤 다시 하면 됩니다.",
@@ -59,8 +59,8 @@ export function noMatchingProviderMessage(model: string, openRouterMessage: stri
     ? `이 모델(${model})은 있지만, 학생 글을 보관하지 않는 조건(ZDR)과 이 앱이 쓰는 JSON 응답 형식을 함께 지키는 AI 제공사가 없습니다(404).`
     : `이 모델(${model})은 있지만, 학생 글을 보관하지 않는 조건(ZDR)을 지키는 AI 제공사가 없습니다(404).`;
   const todo = providersSet
-    ? "OPENROUTER_PROVIDERS를 비우거나 OPENROUTER_MODEL에 다른 모델을 넣은 뒤 Redeploy하세요(설치 안내 참고)."
-    : "OPENROUTER_MODEL에 다른 모델을 넣은 뒤 Redeploy하세요(설치 안내 참고).";
+    ? "OPENROUTER_PROVIDERS를 비우거나 OPENROUTER_MODEL에 다른 모델을 넣으세요(Cloudflare 대시보드 > 이 앱 > Settings > Variables and Secrets, 설치 안내 참고)."
+    : "OPENROUTER_MODEL에 다른 모델을 넣으세요(Cloudflare 대시보드 > 이 앱 > Settings > Variables and Secrets, 설치 안내 참고).";
   return `${why} ${todo}`;
 }
 

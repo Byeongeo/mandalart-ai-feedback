@@ -14,25 +14,47 @@ import { MIGRATIONS_TABLE_SQL, allMigrations, changedMigrations, meaningfulSql, 
 //   (Postgres판 코드가 Date·boolean·객체를 받던 것과 같게 하려는 것입니다.)
 // - 트랜잭션: D1은 'begin … commit'을 쓸 수 없습니다. 여러 문장을 한꺼번에(원자적으로) 하려면 sql.batch([q1, q2, …])를 쓰세요.
 //   batch 안의 쿼리는 미리 실행되지 않도록 await하지 않은 채로 넘깁니다(Query는 await할 때 실행됨).
-// - 지금 시각은 SQL 안에서 ${NOW} 대신 NOW_SQL 글자를 직접 넣어 씁니다: sql`update … set updated_at = ${sql.now()}` 또는
-//   문장 안에 strftime('%Y-%m-%dT%H:%M:%fZ','now')를 그대로 쓰세요(NOW_SQL 상수 참고).
+// - 지금 시각: sql`update … set updated_at = ${NOW}`처럼 NOW(값이 아니라 SQL 글로 들어감)를 쓰거나,
+//   문장 안에 strftime('%Y-%m-%dT%H:%M:%fZ','now')를 그대로 쓰세요(NOW_SQL 상수 참고). 지금부터 얼마 전·뒤는 nowPlus('-10 minutes').
+//   DB 시각과 비교하는 시각은 JS 시계가 아니라 이렇게 DB 시계로 만듭니다(같은 문장 안의 'now'는 모두 같은 값).
 
 /** SQLite에서 '지금'(ISO-8601 UTC, 밀리초까지). 이 모양의 문자열은 글자 비교 = 시각 비교입니다. */
 export const NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+
+/** 값이 아니라 SQL 글 그대로 끼워 넣는 조각. 앱이 정한 상수만 담습니다(사용자 입력 금지: NOW, nowPlus만 만듦). */
+export class RawSql {
+  readonly text: string;
+  constructor(text: string) {
+    this.text = text;
+  }
+}
+/** sql`… ${NOW} …` → 그 자리에 '지금'(DB 시계) */
+export const NOW = new RawSql(NOW_SQL);
+const MODIFIER = /^[+-]\d{1,6}(\.\d{1,3})? (seconds|minutes|hours|days)$/;
+/** sql`… ${nowPlus('-10 minutes')} …` → 지금(DB 시계)에서 그만큼 앞·뒤 시각(같은 ISO 모양) */
+export function nowPlus(modifier: string): RawSql {
+  if (!MODIFIER.test(modifier)) throw new Error(`[DB] 시각 조정 형식이 아닙니다: ${modifier}`);
+  return new RawSql(`strftime('%Y-%m-%dT%H:%M:%fZ','now','${modifier}')`);
+}
 
 // 읽을 때 boolean으로 바꿀 열(0/1로 저장)
 const BOOL_COLS = new Set([
   "is_open", "require_pin", "concern", "rule_concern_current",
   // 쿼리에서 별칭으로 만든 참/거짓 값(필요하면 여기에 더하세요)
   "pending", "exists", "ok", "locked", "has_concern", "taken", "known",
+  "feedback_pending", "superseded", "rule_new", "ai_new", "has_work", "after_review", "concern_reviewed",
 ]);
-// 읽을 때 JSON.parse할 열(JSON 글로 저장)
-const JSON_COLS = new Set(["content", "content_snapshot", "diagnosis", "target", "payload"]);
+// 읽을 때 JSON.parse할 열(JSON 글로 저장). kinds(json_group_array)·response(json_object)는 쿼리에서 만든 JSON 별칭입니다.
+const JSON_COLS = new Set(["content", "content_snapshot", "diagnosis", "target", "payload", "kinds", "response"]);
 // 읽을 때 Date로 바꿀 열('_at'으로 끝나는 열은 자동, 그 밖의 시각 열은 여기)
 const DATE_COLS = new Set(["locked_until", "feedback_pending_until"]);
 
+// 클래스 생성자 매개변수 속성(constructor(public x …))은 쓰지 않습니다. 단위 테스트(node --experimental-strip-types)가 읽지 못합니다.
 export class JsonParam {
-  constructor(public value: unknown) {}
+  value: unknown;
+  constructor(value: unknown) {
+    this.value = value;
+  }
 }
 
 export type Rows<T> = T & { count: number };
@@ -75,7 +97,12 @@ function d1(): D1Like {
 }
 
 export class Query<T = Record<string, unknown>[]> implements PromiseLike<Rows<T>> {
-  constructor(public text: string, public params: unknown[]) {}
+  text: string;
+  params: unknown[];
+  constructor(text: string, params: unknown[]) {
+    this.text = text;
+    this.params = params;
+  }
   statement(db: D1Like = d1()): D1StatementLike {
     const st = db.prepare(this.text);
     return this.params.length ? st.bind(...this.params) : st;
@@ -109,12 +136,18 @@ type SqlTag = {
 
 function tag<T>(strings: TemplateStringsArray, ...values: unknown[]): Query<T> {
   let text = strings[0];
+  const params: unknown[] = [];
   for (let i = 1; i < strings.length; i++) {
     const v = values[i - 1];
     if (v instanceof Query) throw new Error("[DB] SQL 조각 끼워 넣기는 지원하지 않습니다.");
+    if (v instanceof RawSql) {
+      text += v.text + strings[i];
+      continue;
+    }
+    params.push(toParam(v));
     text += "?" + strings[i];
   }
-  return new Query<T>(text, values.map(toParam));
+  return new Query<T>(text, params);
 }
 
 export const sql: SqlTag = Object.assign(tag, {

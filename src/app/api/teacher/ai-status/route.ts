@@ -1,4 +1,5 @@
-import { sql } from "@/lib/db";
+import { nowPlus, sql } from "@/lib/db";
+import { ensureAiKey } from "@/lib/ai-key";
 import { currentTeacher, json } from "@/lib/auth";
 import { aiStatus, checkAi, type AiCheck } from "@/lib/feedback/client";
 import { sanitizeErrorEvent } from "@/lib/feedback/ai-errors";
@@ -15,13 +16,14 @@ export async function GET(req: Request) {
   if (!t) return json({ error: "unauthorized" }, 401);
   const wantCheck = new URL(req.url).searchParams.get("check") === "1";
 
+  await ensureAiKey(); // 교사 화면에서 넣은 AI 키를 이 요청에서 쓸 수 있게 읽어 둠(aiStatus·checkAi보다 먼저)
   const status = aiStatus();
   const [check, events] = await Promise.all([
     wantCheck ? checkAi() : Promise.resolve<AiCheck | null>(null),
     sql<{ created_at: Date; payload: unknown }[]>`
       select e.created_at, e.payload from event_log e
       join students s on s.id = e.student_id join classes c on c.id = s.class_id
-      where c.teacher_id = ${t.id} and e.type = 'feedback_error' and e.created_at > now() - interval '24 hours'
+      where c.teacher_id = ${t.id} and e.type = 'feedback_error' and e.created_at > ${nowPlus("-24 hours")}
       order by e.created_at desc limit 10`,
   ]);
   return json({

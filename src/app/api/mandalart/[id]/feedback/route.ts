@@ -1,11 +1,11 @@
 import * as z from "zod";
 import { currentStudent, isUuid, json } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { NOW, sql } from "@/lib/db";
 import { FeedbackError, loadRoundsForMandalart, requestFeedback } from "@/lib/feedback/round";
 import type { Stage } from "@/lib/mandalart";
 import { parseSaveMeta } from "@/lib/save-rules";
 
-// AI 호출 시간 예산(round.ts의 REQUEST_BUDGET_MS, 240초)보다 넉넉하게 잡습니다(Vercel Hobby + Fluid 최대 300초).
+// (Next.js판의 함수 시간 제한 표시. Cloudflare Workers는 AI 응답을 기다리는 시간에 제한이 없고 CPU 시간만 셉니다.)
 export const maxDuration = 300;
 
 const Body = z.discriminatedUnion("kind", [
@@ -24,7 +24,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!st) return json({ error: "다시 로그인해 주세요." }, 401);
   const { id } = await params;
   if (!isUuid(id)) return json({ error: "만다라트를 찾을 수 없어요." }, 404);
-  const body = await req.json().catch(() => null);
+  const body = (await req.json().catch(() => null)) as { stage?: unknown } | null;
   const parsed = Body.safeParse(body?.stage);
   if (!parsed.success) return json({ error: "피드백 단계가 올바르지 않아요." }, 400);
   try {
@@ -47,7 +47,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   if (!isUuid(id)) return json({ error: "만다라트를 찾을 수 없어요." }, 404);
   const [m] = await sql<{ pending: boolean }[]>`
-    select coalesce(feedback_pending_until > now(), false) as pending from mandalarts where id = ${id} and student_id = ${st.id}`;
+    select coalesce(feedback_pending_until > ${NOW}, 0) as pending from mandalarts where id = ${id} and student_id = ${st.id}`;
   if (!m) return json({ error: "만다라트를 찾을 수 없어요." }, 404);
   // 회차를 먼저 읽고 표시를 나중에 읽으면, 그 사이에 끝난 요청의 회차를 놓치고 pending=false만 볼 수 있으므로 표시를 먼저 읽습니다.
   return json({ rounds: await loadRoundsForMandalart(id), pending: m.pending });

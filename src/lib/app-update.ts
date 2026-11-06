@@ -1,62 +1,7 @@
-// 교사 화면의 '앱 업데이트' 카드에 쓰는 순수 함수와 상수(서버에서만 부르지만 단위 테스트를 위해 server-only는 붙이지 않음).
-// Deploy 버튼이 만든 교사 사본에는 .github/workflows가 따라오지 않으므로, 교사가 GitHub 새 파일 화면에서
-// workflow 파일을 한 번 넣게 하고(installWorkflowUrl), 그 뒤로는 Actions에서 실행하게 합니다(runWorkflowUrl).
-
-export const UPSTREAM_OWNER = "Byeongeo";
-export const UPSTREAM_REPO = "mandalart-ai-feedback";
-export const WORKFLOW_FILE = "update-from-template.yml";
-export const WORKFLOW_PATH = `.github/workflows/${WORKFLOW_FILE}`;
-
-/** 원본 저장소의 최신 package.json(버전 확인용, 공개 저장소) */
-export const UPSTREAM_PACKAGE_JSON_URL = `https://raw.githubusercontent.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}/main/package.json`;
-/** 원본 저장소의 workflow 파일 원문(직접 복사해 넣을 때) */
-export const UPSTREAM_WORKFLOW_RAW_URL = `https://raw.githubusercontent.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}/main/${WORKFLOW_PATH}`;
-/** 설치 안내 5. 앱 업데이트 받기(원본 저장소, 교사 사본은 비공개라 원본을 가리킴) */
-export const UPDATE_DOCS_URL = encodeURI(`https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}/blob/main/docs/설치_안내.md#5-앱-업데이트-받기`);
-/** 설치 안내 5-3. 직접 넣기(카드가 없거나 새 파일 화면의 편집 칸이 비어 있을 때) */
-export const MANUAL_INSTALL_DOCS_URL = encodeURI(
-  `https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}/blob/main/docs/설치_안내.md#5-3-직접-넣기-카드가-없거나-편집-칸이-비어-있을-때`,
-);
-
-/**
- * workflow 파일을 넣는 가지는 언제나 main입니다. workflow가 main을 받아 main에 올리고(checkout ref: main, push HEAD:main),
- * GitHub의 'Run workflow'는 기본 가지(Deploy 복제본은 main)에 있는 파일에만 나오기 때문입니다.
- * (VERCEL_GIT_COMMIT_REF는 미리보기 배포에서 다른 가지일 수 있어 쓰지 않습니다.)
- */
-export const WORKFLOW_BRANCH = "main";
-
-export type GitRepo = { owner: string; repo: string };
-
-const NAME = /^[A-Za-z0-9._-]{1,100}$/;
-
-/**
- * Vercel 시스템 환경 변수(VERCEL_GIT_REPO_OWNER, VERCEL_GIT_REPO_SLUG, 빌드·실행 때 모두 있음)에서
- * 이 앱의 GitHub 저장소를 알아냅니다. 없거나(내 컴퓨터, 시스템 변수 노출을 끈 경우) GitHub가 아니면 null.
- * 필수 값이 아닙니다. null이면 화면이 버튼 대신 직접 하는 방법을 보여 줍니다.
- */
-export function repoFromEnv(env: Record<string, string | undefined>): GitRepo | null {
-  const owner = env.VERCEL_GIT_REPO_OWNER?.trim() ?? "";
-  const repo = env.VERCEL_GIT_REPO_SLUG?.trim() ?? "";
-  const provider = env.VERCEL_GIT_PROVIDER?.trim().toLowerCase();
-  if (provider && provider !== "github") return null;
-  if (!NAME.test(owner) || !NAME.test(repo) || owner === "." || owner === ".." || repo === "." || repo === "..") return null;
-  return { owner, repo };
-}
-
-const enc = encodeURIComponent;
-
-/**
- * GitHub 새 파일 화면(파일 이름·내용이 채워진 채로). 교사는 'Commit changes…' → 'Commit changes'만 누르면 됩니다.
- * content에는 src/lib/update-workflow-yml.ts의 UPDATE_WORKFLOW_YML(workflow 파일과 같은 내용)을 넣습니다.
- */
-export function installWorkflowUrl(r: GitRepo, content: string): string {
-  return `https://github.com/${enc(r.owner)}/${enc(r.repo)}/new/${WORKFLOW_BRANCH}?filename=${enc(WORKFLOW_PATH)}&value=${enc(content)}`;
-}
-
-/** Actions의 '앱 업데이트' 화면('Run workflow' 버튼이 있는 곳) */
-export function runWorkflowUrl(r: GitRepo): string {
-  return `https://github.com/${enc(r.owner)}/${enc(r.repo)}/actions/workflows/${WORKFLOW_FILE}`;
-}
+// 교사 화면의 '앱 업데이트' 카드에 쓰는 순수 함수와 상수. 서버(API)와 화면(AppUpdateCard) 모두 불러 쓰므로 다른 모듈을 불러오지 않습니다.
+// 이 앱은 강사가 운영하는 설치 페이지(installer/)로 선생님 Cloudflare 계정에 설치됩니다. 설치 페이지 주소는 설치할 때
+// INSTALLER_URL 변수로 들어가고, 새 버전은 `${INSTALLER_URL}/version.json`({ version })으로 확인합니다.
+// 업데이트는 설치 페이지의 '업데이트' 탭(`${INSTALLER_URL}/#update`)에서 합니다(학생 글·교사 계정·설정 코드는 그대로 남음).
 
 // ── 버전 ─────────────────────────────────────────────────────
 
@@ -76,7 +21,7 @@ export function compareVersions(a: unknown, b: unknown): 1 | 0 | -1 | null {
   return 0;
 }
 
-/** 원본 버전(latest)이 지금 버전(current)보다 새것일 때만 true(읽을 수 없으면 false). */
+/** 설치 페이지 버전(latest)이 지금 버전(current)보다 새것일 때만 true(읽을 수 없으면 false). */
 export function isNewerVersion(latest: unknown, current: unknown): boolean {
   return compareVersions(latest, current) === 1;
 }
@@ -86,45 +31,71 @@ export function subjectParticle(version: string): "이" | "가" {
   return /[2459]$/.test(version.trim()) ? "가" : "이";
 }
 
+// ── 설치 페이지 주소 ─────────────────────────────────────────
+
+/**
+ * INSTALLER_URL에서 origin만 꺼냅니다. https만 받고(로컬 개발은 http://localhost·127.0.0.1도), 그 밖이면 null.
+ * 이 값으로 서버가 fetch하고 화면이 링크를 만들므로 다른 모양(javascript:, 사용자 정보가 든 주소 등)은 받지 않습니다.
+ */
+export function installerOrigin(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  let u: URL;
+  try {
+    u = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (u.username || u.password) return null;
+  const local = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) return null;
+  return u.origin;
+}
+
+export const versionJsonUrl = (origin: string) => `${origin}/version.json`;
+/** 설치 페이지의 '업데이트' 화면 */
+export const updatePageUrl = (origin: string) => `${origin}/#update`;
+
+// ── 최신 버전 받기 ────────────────────────────────────────────
+
 export const VERSION_TIMEOUT_MS = 2_500;
-/** 받은 버전을 이 시간 동안 기억합니다(이 서버 인스턴스 안에서만). */
+/** 받은 버전을 이 시간 동안 기억합니다(이 Worker 인스턴스 안에서만). */
 export const VERSION_TTL_MS = 60 * 60_000;
-/** 실패한 뒤 이 시간 동안은 다시 묻지 않습니다(이 서버 인스턴스 안에서만). */
+/** 실패한 뒤 이 시간 동안은 다시 묻지 않습니다(이 Worker 인스턴스 안에서만). */
 export const VERSION_RETRY_PAUSE_MS = 5 * 60_000;
 
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
-/** 기억해 둔 결과(받는 중이면 그 Promise)와 다시 물을 수 있는 시각 */
-export type VersionMemo = { until: number; value: Promise<string | null> | null };
-const memo: VersionMemo = { until: 0, value: null };
+/** 기억해 둔 결과: 어느 주소의 값인지, 언제까지 쓰는지 */
+export type VersionMemo = { url: string; until: number; value: string | null };
+const memo: VersionMemo = { url: "", until: 0, value: null };
 
 /**
- * 원본 저장소 main의 package.json 버전을 읽습니다. 어떤 실패든(시간 초과, 네트워크, 200이 아닌 응답, 모양이 다른 내용) null을
- * 돌려주고 예외를 던지지 않습니다.
- * Next.js fetch 캐시(next.revalidate)는 쓰지 않습니다. 지난 값을 뒤에서 새로 받을 때 Next가 signal(시간 제한)을 빼고 보내서,
- * 원본이 응답하지 않으면 그 요청이 끝없이 남기 때문입니다. 대신 이 서버 인스턴스 안에서 결과를 기억합니다(성공 1시간, 실패 5분,
- * 받는 중에 온 요청은 같은 결과를 함께 기다림). 그래서 네트워크 요청은 언제나 timeoutMs 안에 끝납니다.
+ * 설치 페이지의 앱 버전(`/version.json`). 어떤 실패든(시간 초과 2.5초, 네트워크, 200이 아닌 응답, 모양이 다른 내용) null을 돌려주고
+ * 예외를 던지지 않습니다. 결과는 이 Worker 인스턴스 안에서 기억합니다(성공 1시간, 실패 5분).
+ * 받는 중인 Promise는 다른 요청과 나누지 않습니다. Workers에서는 다른 요청이 시작한 fetch를 기다리다가 그 요청이 끝나면
+ * 멈출 수 있기 때문입니다(요청 사이 I/O 공유 금지). 그래서 동시에 들어온 요청은 각자 묻고, 끝난 값만 함께 씁니다.
  */
-export function fetchLatestVersion(
+export async function fetchLatestVersion(
+  origin: string,
   opts: { fetch?: Fetcher; timeoutMs?: number; now?: () => number; state?: VersionMemo } = {},
 ): Promise<string | null> {
   const now = opts.now ?? Date.now;
   const state = opts.state ?? memo;
-  if (state.value && now() < state.until) return state.value;
-  const value = readLatestVersion(opts.fetch ?? ((url, init) => fetch(url, init)), opts.timeoutMs ?? VERSION_TIMEOUT_MS);
+  const url = versionJsonUrl(origin);
+  if (state.url === url && now() < state.until) return state.value;
+  const value = await readLatestVersion(url, opts.fetch ?? ((u, init) => fetch(u, init)), opts.timeoutMs ?? VERSION_TIMEOUT_MS);
+  state.url = url;
   state.value = value;
-  state.until = Infinity; // 받는 동안(최대 timeoutMs)
-  void value.then((v) => {
-    if (state.value === value) state.until = now() + (v ? VERSION_TTL_MS : VERSION_RETRY_PAUSE_MS);
-  });
+  state.until = now() + (value ? VERSION_TTL_MS : VERSION_RETRY_PAUSE_MS);
   return value;
 }
 
-async function readLatestVersion(doFetch: Fetcher, timeoutMs: number): Promise<string | null> {
+async function readLatestVersion(url: string, doFetch: Fetcher, timeoutMs: number): Promise<string | null> {
   try {
-    const res = await doFetch(UPSTREAM_PACKAGE_JSON_URL, {
-      cache: "no-store",
+    const res = await doFetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { accept: "application/json, text/plain" },
+      headers: { accept: "application/json" },
+      // Workers의 fetch는 redirect "error"를 받지 않을 수 있어 "manual"(3xx는 res.ok가 아니므로 실패로 봄)
+      redirect: "manual",
     });
     if (!res.ok) return null;
     const data: unknown = await res.json();
@@ -133,4 +104,25 @@ async function readLatestVersion(doFetch: Fetcher, timeoutMs: number): Promise<s
   } catch {
     return null;
   }
+}
+
+export type AppUpdateInfo = {
+  /** 지금 버전(APP_VERSION). 모르면 null */
+  current: string | null;
+  /** 설치 페이지에 있는 더 새 버전. 없거나(같은 버전) 확인하지 못하면 null */
+  latest: string | null;
+  /** 업데이트하러 갈 설치 페이지 주소(latest가 있을 때만) */
+  updateUrl: string | null;
+};
+
+/** GET /api/teacher/app-update의 내용: 환경 변수(APP_VERSION, INSTALLER_URL)와 설치 페이지의 버전으로 만듭니다. */
+export async function appUpdateInfo(
+  env: { APP_VERSION?: unknown; INSTALLER_URL?: unknown },
+  getLatest: (origin: string) => Promise<string | null> = (o) => fetchLatestVersion(o),
+): Promise<AppUpdateInfo> {
+  const current = parseVersion(env.APP_VERSION) ? (env.APP_VERSION as string).trim() : null;
+  const origin = installerOrigin(env.INSTALLER_URL);
+  const newest = origin ? await getLatest(origin).catch(() => null) : null;
+  const latest = newest && isNewerVersion(newest, current) ? newest : null;
+  return { current, latest, updateUrl: latest && origin ? updatePageUrl(origin) : null };
 }

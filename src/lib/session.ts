@@ -2,8 +2,9 @@ import "server-only";
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import { createHmac } from "node:crypto";
-import { sql } from "./db";
+import { NOW, sql } from "./db";
 import { pinFingerprint } from "./pin";
+import { maybeRc } from "./request-context";
 import { SESSION_SECRET_KEY, envSessionSecret, newSessionSecret, sessionSecretWarning, usableStoredSecret } from "./secret";
 
 // pf: 로그인할 때의 지문. 학생은 PIN·이름·학급 PIN 설정의 지문(PIN 자체는 넣지 않음), 교사는 비밀번호 해시의 지문.
@@ -16,36 +17,48 @@ const COOKIE = "mdl_session";
 const TEACHER_MAX_AGE = 60 * 60 * 8;
 const STUDENT_TTL = 60 * 60 * 3;
 
-// 로그인 비밀값: 환경 변수 SESSION_SECRET(32자 이상)이 있으면 그 값, 없으면 DB(app_settings)에 한 번 만들어 둔 값.
-// 여러 인스턴스가 동시에 만들려 해도 'on conflict do nothing' 뒤 다시 읽으므로 모두 같은 값을 씁니다. 메모리에 기억합니다.
-const g = globalThis as unknown as { __mandalartSecret?: Promise<string> | null };
+// 로그인 비밀값: Cloudflare 비밀값 APP_SECRET(32자 이상, 설치 프로그램이 넣음)이 있으면 그 값,
+// 없으면 DB(app_settings)에 한 번 만들어 둔 값. 여러 Worker가 동시에 만들려 해도 'on conflict do nothing' 뒤 다시 읽으므로
+// 모두 같은 값을 씁니다. DB 값은 읽은 뒤 Worker(isolate) 메모리에 기억합니다.
+// 기억하는 것은 다 읽은 값(문자열)뿐입니다. 읽는 중인 Promise를 다른 요청과 나눠 쓰지 않습니다(Workers에서는 한 요청의 입출력을
+// 다른 요청이 기다리면, 먼저 요청이 끊길 때 함께 멈출 수 있음). 처음 몇 요청이 동시에 읽어도 같은 값이 나옵니다.
+let cachedDbSecret: string | null = null;
 let warned = false;
 
-async function loadSecret(): Promise<string> {
-  const fromEnv = envSessionSecret(process.env);
-  if (fromEnv) return fromEnv;
-  const warning = sessionSecretWarning(process.env);
-  if (warning && !warned) {
-    warned = true;
-    console.warn(warning);
-  }
+function env(): Record<string, unknown> {
+  return maybeRc()?.env ?? {};
+}
+
+async function loadDbSecret(): Promise<string> {
   await sql`insert into app_settings (key, value) values (${SESSION_SECRET_KEY}, ${newSessionSecret()})
             on conflict (key) do nothing`;
   const [row] = await sql<{ value: string }[]>`select value from app_settings where key = ${SESSION_SECRET_KEY}`;
   if (usableStoredSecret(row?.value)) return row.value;
   // 누군가 DB 값을 짧게 바꿔 놓았다면 새로 만들어 덮어씁니다(모두 다시 로그인).
   const fresh = newSessionSecret();
-  await sql`update app_settings set value = ${fresh}, updated_at = now() where key = ${SESSION_SECRET_KEY}`;
+  await sql`update app_settings set value = ${fresh}, updated_at = ${NOW} where key = ${SESSION_SECRET_KEY}`;
   return fresh;
 }
 
-/** 세션 서명에 쓰는 비밀값(문자열). 교사 로그인 시도 기록의 열쇠(loginIdKey)에도 씁니다. */
-export function sessionSecret(): Promise<string> {
-  g.__mandalartSecret ??= loadSecret().catch((e) => {
-    g.__mandalartSecret = null; // 실패하면 다음 요청에서 다시 시도
-    throw e;
-  });
-  return g.__mandalartSecret;
+/** 세션 서명에 쓰는 비밀값(문자열). 교사 로그인 시도 기록의 열쇠(loginIdKey)와 AI 키 암호화(ai-key.ts)에도 씁니다. */
+export async function sessionSecret(): Promise<string> {
+  const e = env();
+  const fromEnv = envSessionSecret(e);
+  if (fromEnv) return fromEnv;
+  const warning = sessionSecretWarning(e);
+  if (warning && !warned) {
+    warned = true;
+    console.warn(warning);
+  }
+  if (cachedDbSecret) return cachedDbSecret;
+  const v = await loadDbSecret();
+  cachedDbSecret = v;
+  return v;
+}
+
+/** 테스트용: 기억해 둔 DB 비밀값을 잊습니다(새 DB로 바꿀 때). */
+export function forgetSecretForTests() {
+  cachedDbSecret = null;
 }
 
 async function key(): Promise<Uint8Array> {
@@ -73,9 +86,9 @@ export async function createSession(s: Session) {
     .setIssuedAt()
     .setExpirationTime(`${ttl}s`)
     .sign(await key());
+  // Secure는 쿠키 흉내(worker/shims/next-headers.ts)가 https 요청일 때 언제나 붙입니다(로컬 http 개발 서버에서만 빠짐).
   (await cookies()).set(COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
     // 학생은 maxAge를 두지 않아 브라우저 세션 쿠키가 됩니다.

@@ -1,6 +1,7 @@
 import "server-only";
 import * as z from "zod";
 import { AI_ERROR_MESSAGES, classifyHttp, noMatchingProviderMessage, type AiErrorCode } from "./ai-errors";
+import { maybeRc } from "../request-context";
 
 // OpenRouter(OpenAI 호환 Chat Completions)로 모델을 부릅니다. 학생 이름·번호·PIN은 절대 보내지 않습니다(만다라트 글만).
 // 회차마다 실제로 응답한 모델·제공사가 feedback_rounds.model에 저장됩니다.
@@ -16,23 +17,47 @@ const MIN_RETRY_LEFT_MS = 15_000; // 남은 시간이 15초보다 적으면 다�
 const MIN_ATTEMPT_MS = 10_000; // 한 번의 시도에 최소 10초는 있어야 부름
 const MAX_RETRY_AFTER_MS = 20_000;
 
-// 개발용 모의 모드: API 키 없이 화면 흐름을 확인할 때만 씁니다. 운영(production) 빌드에서는 항상 꺼집니다.
-export const MOCK = process.env.FEEDBACK_MOCK === "1" && process.env.NODE_ENV !== "production";
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-/** OPENROUTER_API_KEY가 없을 때. 학생에게는 message를, 교사 화면에는 aiStatus()의 keyConfigured=false를 보여 줍니다. */
+/**
+ * 개발용 모의 모드: API 키 없이 화면 흐름을 확인할 때만 씁니다(로컬 .dev.vars에 FEEDBACK_MOCK=1).
+ * 실제 설치에서는 켜질 수 없게 두 가지를 모두 봅니다: 환경 변수 FEEDBACK_MOCK=1, 그리고 요청 주소가 내 컴퓨터
+ * (localhost·127.0.0.1)일 것. Cloudflare에 올린 앱은 workers.dev 등 바깥 주소로만 요청이 오므로 언제나 꺼집니다.
+ * 요청 문맥이 없으면(단위 테스트 등) 꺼집니다.
+ */
+export function isMock(): boolean {
+  const c = maybeRc();
+  if (!c) return false;
+  return String(c.env.FEEDBACK_MOCK ?? "").trim() === "1" && LOCAL_HOSTS.has(c.url.hostname);
+}
+
+/** AI 키가 없을 때. 학생에게는 message를, 교사 화면에는 aiStatus()의 keyConfigured=false를 보여 줍니다. */
 export class AiKeyMissingError extends Error {
   constructor() {
     super("선생님이 아직 AI 키를 넣지 않았어요. 선생님께 말씀드려 주세요.");
   }
 }
 
+// 설정 값: Cloudflare 환경 변수(요청 문맥의 env). 요청 문맥이 없을 때(단위 테스트)만 process.env를 봅니다.
 function env(name: string): string | undefined {
-  const v = process.env[name]?.trim();
+  const c = maybeRc();
+  const raw = c ? c.env[name] : process.env[name];
+  const v = typeof raw === "string" ? raw.trim() : undefined;
   return v ? v : undefined;
 }
 
+/** 환경 변수 OPENROUTER_API_KEY(있으면 교사 화면에서 넣은 키보다 먼저 씀). 값은 키 상태(끝 4자리) 확인에만 쓰고 내보내지 마세요. */
+export function envApiKey(): string | undefined {
+  return env("OPENROUTER_API_KEY");
+}
+
+/**
+ * AI 설정. 키는 환경 변수 OPENROUTER_API_KEY가 있으면 그 값, 없으면 교사 화면에서 넣은 키(app_settings에 암호화해 저장)입니다.
+ * 교사 화면에서 넣은 키는 요청마다 한 번 ensureAiKey()(src/lib/ai-key.ts)가 읽어 요청 문맥(rc().aiKey)에 둡니다.
+ * 그래서 aiConfig·aiStatus·assertAiReady·checkAi를 쓰는 곳은 먼저 await ensureAiKey()를 불러야 합니다.
+ */
 export function aiConfig() {
-  const apiKey = env("OPENROUTER_API_KEY");
+  const apiKey = envApiKey() ?? maybeRc()?.aiKey ?? undefined;
   const model = env("OPENROUTER_MODEL") ?? DEFAULT_MODEL;
   const providers = (env("OPENROUTER_PROVIDERS") ?? "")
     .split(",")
@@ -48,18 +73,19 @@ export function aiConfig() {
 /** 교사 화면용 AI 설정 상태(키 값은 절대 돌려주지 않음) */
 export function aiStatus(): { keyConfigured: boolean; mock: boolean; model: string } {
   const c = aiConfig();
-  return { keyConfigured: MOCK || !!c.apiKey, mock: MOCK, model: MOCK ? "mock" : c.model };
+  const mock = isMock();
+  return { keyConfigured: mock || !!c.apiKey, mock, model: mock ? "mock" : c.model };
 }
 
 /** 피드백을 만들 수 있는지 먼저 확인합니다(모의 모드이면 통과). */
 export function assertAiReady(): void {
-  if (!MOCK && !aiConfig().apiKey) throw new AiKeyMissingError();
+  if (!isMock() && !aiConfig().apiKey) throw new AiKeyMissingError();
 }
 
 export type CallMeta = { model: string; provider: string | null; ms: number; usage: unknown };
 
 export function metaLabel(m: CallMeta | null): string {
-  if (MOCK) return "mock";
+  if (isMock()) return "mock";
   if (!m) return aiConfig().model;
   return m.provider ? `${m.model} @ ${m.provider}` : m.model;
 }
@@ -361,7 +387,7 @@ async function explainFailure(cfg: AiConfig, apiKey: string, err: AiCallError): 
 }
 
 export async function checkAi(): Promise<AiCheck> {
-  if (MOCK) return { ok: true, status: 200, code: null, message_ko: "모의 모드(FEEDBACK_MOCK=1)라 AI를 부르지 않습니다." };
+  if (isMock()) return { ok: true, status: 200, code: null, message_ko: "모의 모드(FEEDBACK_MOCK=1)라 AI를 부르지 않습니다." };
   const cfg = aiConfig();
   const apiKey = cfg.apiKey;
   if (!apiKey) return { ok: false, status: 0, code: "no_key", message_ko: AI_ERROR_MESSAGES.no_key };

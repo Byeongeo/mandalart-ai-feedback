@@ -1,0 +1,16 @@
+{
+  // 설치 페이지 Worker(강사 계정에 한 번 올림). 앱 묶음은 빌드 때 src/generated/app-bundle.ts로 들어갑니다.
+  // 올리기: 저장소 루트에서 `npm run build`(앱) → 여기서 `npm run deploy`(앱 묶음 넣기 + 배포).
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "mandalart-installer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // 설치 뒤 앱(https://mandalart.<하위 도메인>.workers.dev)이 대답하는지 확인할 때, 설치 페이지와 같은 계정의 앱이어도
+  // (강사가 자기 계정으로 시험할 때) 다른 Worker 호출 제한(오류 1042) 없이 공개 인터넷으로 부르게 합니다.
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  // 토큰은 요청 본문에만 있고 기록하지 않지만, 혹시 모를 노출을 줄이려고 로그 수집은 끕니다.
+  "observability": { "enabled": false },
+  "upload_source_maps": false
+}

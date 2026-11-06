@@ -1,6 +1,6 @@
 import * as z from "zod";
 import { randomInt } from "node:crypto";
-import { sql } from "@/lib/db";
+import { nowPlus, sql } from "@/lib/db";
 import { createSession, sessionSecret, teacherPasswordTag } from "@/lib/session";
 import { loginDelayMs, loginIdKey, verifyPasswordOrDummy } from "@/lib/password";
 import { json } from "@/lib/auth";
@@ -20,10 +20,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // 1) 확인하기 전에 시도 기록을 먼저 남깁니다: event_log(student_id 없음, type 'teacher_login_fail', payload {key}).
 //    key는 아이디의 해시(loginIdKey)라서 아이디 칸에 비밀번호를 넣어도 원문이 남지 않습니다. 비밀번호도 남기지 않습니다.
 // 2) 같은 key로 최근 10분 안에 남은 기록 중 내 기록 id 이하의 개수(n)를 셉니다. 동시에 들어온 요청도 저마다 다른 n을 받습니다.
-// 3) n이 10을 넘으면 확인 전에 min(2×(n−10), 15)초 기다립니다(트랜잭션·연결을 잡지 않은 채).
+// 3) n이 10을 넘으면 확인 전에 min(2×(n−10), 15)초 기다립니다(기다리는 동안 CPU를 쓰지 않음).
 // 4) 맞으면 내 기록을 지우고 같은 key의 이전 실패를 'teacher_login_fail_cleared'로 바꿔 더는 세지 않습니다.
 //    틀리면 기록을 실패로 그대로 둡니다. 그래서 세는 것은 실패와 아직 끝나지 않은 시도뿐입니다.
-// 5) n이 100(LOGIN_FLOOD_CEILING)을 넘으면 scrypt·기다리기 없이 내 기록을 지우고 곧바로 429를 돌려줍니다.
+// 5) n이 100(LOGIN_FLOOD_CEILING)을 넘으면 비밀번호 해시 계산·기다리기 없이 내 기록을 지우고 곧바로 429를 돌려줍니다.
 //    내 기록을 지우므로 몰아 보내도 기록은 key마다 10분에 100개 남짓으로 묶이고, 10분이 지나 앞 기록이 빠지면 다시 시도할 수 있습니다.
 //    세는 쿼리는 student_id is null·type·key·내 id 이하·최근 10분으로 좁혀 셉니다.
 export async function POST(req: Request) {
@@ -32,14 +32,14 @@ export async function POST(req: Request) {
   const { loginId, password } = parsed.data;
   const key = loginIdKey(loginId, await sessionSecret());
 
-  const [{ id: attemptId }] = await sql<{ id: string }[]>`
+  const [{ id: attemptId }] = await sql<{ id: number }[]>`
     insert into event_log (student_id, type, payload)
     values (null, 'teacher_login_fail', ${sql.json({ key })})
     returning id`;
   const [{ n }] = await sql<{ n: number }[]>`
-    select count(*)::int as n from event_log
-    where student_id is null and type = 'teacher_login_fail' and payload->>'key' = ${key}
-      and id <= ${attemptId} and created_at > now() - make_interval(mins => ${WINDOW_MINUTES})`;
+    select count(*) as n from event_log
+    where student_id is null and type = 'teacher_login_fail' and json_extract(payload, '$.key') = ${key}
+      and id <= ${attemptId} and created_at > ${nowPlus(`-${WINDOW_MINUTES} minutes`)}`;
   if (n > LOGIN_FLOOD_CEILING) {
     await sql`delete from event_log where id = ${attemptId}`;
     return json({ error: "로그인 시도가 너무 많아요. 10분 뒤에 다시 시도해 주세요." }, 429);
@@ -58,8 +58,8 @@ export async function POST(req: Request) {
   await sql`delete from event_log where id = ${attemptId}`;
   await sql`
     update event_log set type = 'teacher_login_fail_cleared'
-    where student_id is null and type = 'teacher_login_fail' and payload->>'key' = ${key} and id < ${attemptId}
-      and created_at > now() - make_interval(mins => ${WINDOW_MINUTES})`;
+    where student_id is null and type = 'teacher_login_fail' and json_extract(payload, '$.key') = ${key} and id < ${attemptId}
+      and created_at > ${nowPlus(`-${WINDOW_MINUTES} minutes`)}`;
   await createSession({ role: "teacher", id: t.id, pf: await teacherPasswordTag(t.password_hash) });
   return json({ ok: true });
 }

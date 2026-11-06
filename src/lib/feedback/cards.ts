@@ -1,6 +1,6 @@
 import "server-only";
 import * as z from "zod";
-import { MOCK, structuredCall, type CallMeta } from "./client";
+import { isMock, structuredCall, type CallMeta } from "./client";
 import { CATEGORIES } from "./categories";
 import type { DiagnosisItem } from "./diagnose";
 import { targetKey, targetLabel, toPromptText, type MandalartContent } from "../mandalart";
@@ -129,7 +129,7 @@ export async function aiCards(
     }),
     meta,
   });
-  if (MOCK) {
+  if (isMock()) {
     return done(plans.map((p) => `[모의 피드백 · ${KIND_LABEL[p.kind]}] ${p.item.evidence}. 이 부분을 어떻게 바꾸면 더 분명해질지 생각해 보세요.`), null);
   }
   const list = plans

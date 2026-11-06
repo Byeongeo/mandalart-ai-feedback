@@ -6,9 +6,9 @@ import { STALE_MESSAGE, parseSaveMeta } from "@/lib/save-rules";
 import { saveMandalart } from "@/lib/save-mandalart";
 
 // 학생 화면은 저장을 15초 기다리다 끊고 2초쯤 뒤 다시 보냅니다(src/lib/student.ts의 SAVE_TIMEOUT_MS).
-// 끊긴 요청이 그 뒤에 늦게 반영되어 새 글을 덮어쓰지 않도록, 이 함수는 12초 안에 끝나고
-// DB 문장은 하나에 4초를 넘기면 취소됩니다(끝나지 못한 저장은 반영되지 않고, 화면은 실패로 보고 다시 저장).
-// 늦게 도착하더라도 저장 번호(revision)가 이미 올라가 있으면 반영되지 않습니다(src/lib/save-rules.ts의 saveDecision).
+// 끊긴 요청이 그 뒤에 늦게 반영되더라도 새 글을 덮어쓰지 않습니다: 저장은 '읽은 저장 번호(revision)가 그대로일 때만' 바꾸는
+// 한 문장이고(src/lib/save-mandalart.ts), 다시 보낸 저장이 번호를 이미 올려 두었으면 늦은 요청은 반영되지 않습니다
+// (src/lib/save-rules.ts의 saveDecision·nextRevision). (Next.js판의 12초 제한·문장 4초 제한은 D1에 없어 번호 확인만으로 지킵니다.)
 export const maxDuration = 12;
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -30,7 +30,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!st) return json({ error: "다시 로그인해 주세요." }, 401);
   const { id } = await params;
   if (!isUuid(id)) return json({ error: "만다라트를 찾을 수 없어요." }, 404);
-  const body = await req.json().catch(() => null);
+  const body = (await req.json().catch(() => null)) as { content?: unknown } | null;
   const parsed = MandalartContent.safeParse(body?.content);
   if (!parsed.success) {
     // 글자 수가 넘친 칸이 있으면 어느 칸인지 알려 줍니다(학생 화면이 그 칸으로 이동).
